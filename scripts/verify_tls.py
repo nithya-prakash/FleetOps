@@ -12,6 +12,7 @@ import socket
 import ssl
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -106,19 +107,21 @@ def main() -> int:
             ok = True
         check("control plane: plain HTTP is not served on the HTTPS port", ok)
         # the platform really works over TLS: Prometheus scrapes https targets with token auth
-        prom = httpx.get(f"http://127.0.0.1:{ENV.get('FLEETOPS_PROM_PORT', '19090')}/api/v1/targets", timeout=10).json()
-        targets = prom["data"]["activeTargets"]
-        check(
-            "Prometheus scrapes every target over verified HTTPS",
-            bool(targets) and all(t["health"] == "up" and t["scrapeUrl"].startswith("https://") for t in targets),
-            str(
-                [
-                    (t["scrapeUrl"], t["health"])
-                    for t in targets
-                    if t["health"] != "up" or not t["scrapeUrl"].startswith("https://")
-                ]
-            ),
-        )
+        # Prometheus scrapes on its own schedule, so right after start-up a target can legitimately still be unscraped.
+        # Poll (bounded) instead of asserting instantly; a persistently failing scrape still fails with its last error.
+        prom_url = f"http://127.0.0.1:{ENV.get('FLEETOPS_PROM_PORT', '19090')}/api/v1/targets"
+        deadline = time.monotonic() + 60
+        while True:
+            targets = httpx.get(prom_url, timeout=10).json()["data"]["activeTargets"]
+            bad = [
+                (t["scrapeUrl"], t["health"], t.get("lastError", ""))
+                for t in targets
+                if t["health"] != "up" or not t["scrapeUrl"].startswith("https://")
+            ]
+            if (targets and not bad) or time.monotonic() > deadline:
+                break
+            time.sleep(3)
+        check("Prometheus scrapes every target over verified HTTPS", bool(targets) and not bad, str(bad))
         logs = subprocess.run(
             [
                 "docker",

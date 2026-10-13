@@ -95,7 +95,10 @@ def test_better_candidate_passes_and_then_rolls_out_normally(stack: Stack) -> No
     assert r.status_code == 201, r.text
     assert r.json()["quality"]["passed"] is True and r.json()["quality"]["compared_against"] == [good]
     final = stack.wait_state(r.json()["deployment_id"], {"COMPLETED", "ROLLED_BACK", "FAILED"})
-    assert final["state"] == "COMPLETED"  # runtime health checks / canary still ran
+    assert final["state"] == "COMPLETED", (
+        final["reason"],
+        final["targets"],
+    )  # runtime health checks / canary still ran
     assert active(stack, "edge-01") == active(stack, "edge-02") == better
 
 

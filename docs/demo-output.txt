@@ -1,0 +1,108 @@
+
+==> training baseline v1 (seed=1) and registering in MLflow
+  registered anomaly-detector:1 sha256=de495074d7c65166… test_f1=0.75 roc_auc=0.98  (synthetic data)
+
+==> training candidate v2 (seed=2) and registering in MLflow
+  registered anomaly-detector:2 sha256=ee751b013a14f7b6… test_f1=0.70 roc_auc=0.91  (synthetic data)
+
+==> registering devices (group line-a)
+  edge-01: registered
+  edge-02: registered
+  edge-03: registered
+
+==> fleet
+  edge-01: ONLINE   model=None:None
+  edge-02: ONLINE   model=None:None
+  edge-03: ONLINE   model=None:None
+
+==> deployments
+
+==> rolling out baseline v1 to line-a (canary: 1 device, then the rest)
+  deployment b163f323 created: batches=[['edge-01'], ['edge-02', 'edge-03']] skipped={}
+  IN_PROGRESS  edge-01=DISTRIBUTING edge-02=PENDING edge-03=PENDING
+  IN_PROGRESS  edge-01=ACTIVE edge-02=PENDING edge-03=PENDING
+  IN_PROGRESS  edge-01=ACTIVE edge-02=ACTIVE edge-03=ACTIVE
+  COMPLETED    edge-01=ACTIVE edge-02=ACTIVE edge-03=ACTIVE
+
+==> local inference on every edge agent
+  edge-01: active=anomaly-detector:1 previous=None predict={'score': 0.007255190517753363, 'anomaly': False, 'latency_ms': 0.15045799955260009, 'model': {'name': 'anomaly-detector', 'version': 1}}
+  edge-02: active=anomaly-detector:1 previous=None predict={'score': 0.007255190517753363, 'anomaly': False, 'latency_ms': 0.12454099851311184, 'model': {'name': 'anomaly-detector', 'version': 1}}
+  edge-03: active=anomaly-detector:1 previous=None predict={'score': 0.007255190517753363, 'anomaly': False, 'latency_ms': 0.18983300105901435, 'model': {'name': 'anomaly-detector', 'version': 1}}
+
+==> injecting deterministic fault: canary edge-01 will fail inference on v2
+
+==> rolling out candidate v2 (canary first)
+  deployment 5362780c created: batches=[['edge-01'], ['edge-02', 'edge-03']] skipped={}
+  IN_PROGRESS  edge-01=DISTRIBUTING edge-02=PENDING edge-03=PENDING
+  IN_PROGRESS  edge-01=ACTIVE edge-02=PENDING edge-03=PENDING
+  ROLLED_BACK  edge-01=ROLLED_BACK edge-02=CANCELLED edge-03=CANCELLED
+  final state: ROLLED_BACK - edge-01: health check failed: inference error rate 100.0% > 5.0%
+
+==> verify: rollback was a real model switch; untouched devices never left v1
+  edge-01: active=anomaly-detector:1 previous=None predict={'score': 0.007255190517753363, 'anomaly': False, 'latency_ms': 0.17108300016843714, 'model': {'name': 'anomaly-detector', 'version': 1}}
+  edge-02: active=anomaly-detector:1 previous=None predict={'score': 0.007255190517753363, 'anomaly': False, 'latency_ms': 0.1660839989199303, 'model': {'name': 'anomaly-detector', 'version': 1}}
+  edge-03: active=anomaly-detector:1 previous=None predict={'score': 0.007255190517753363, 'anomaly': False, 'latency_ms': 0.10183399717789143, 'model': {'name': 'anomaly-detector', 'version': 1}}
+
+==> audit trail for this deployment
+  2026-10-13T13:20:59.083702Z deployment.created           {"model": "anomaly-detector:2", "group": "line-a", "batches": [["edge-01"], ["edge-02", "edge-03"]], "skipped"
+  2026-10-13T13:20:59.093597Z deployment.in_progress       {"from": "PENDING", "reason": null}
+  2026-10-13T13:21:00.928295Z target.health_failed         {"reasons": ["inference error rate 100.0% > 5.0%"], "observation": {"at": "2026-10-13T13:21:00.234732+00:00", 
+  2026-10-13T13:21:00.928527Z deployment.rolling_back      {"from": "IN_PROGRESS", "reason": "edge-01: health check failed: inference error rate 100.0% > 5.0%"}
+  2026-10-13T13:21:00.988245Z deployment.rolled_back       {"from": "ROLLING_BACK", "reason": null}
+
+==> benchmark metrics (same fixed evaluation suite for every model, so they are comparable)
+  v1: precision=0.661 recall=0.679 f1=0.670 roc_auc=0.949 false_positive_rate=0.020
+  v2: precision=0.804 recall=0.557 f1=0.658 roc_auc=0.937 false_positive_rate=0.008
+
+==> v2 vs the running v1 with a strict policy (recall may drop at most 0.02): blocked before any device is touched
+  HTTP 422 quality_gate_failed
+    - [REGRESSION] bench_recall regressed: 0.5566 vs v1 0.6787 (allowed drop 0.0200, limit 0.6587)
+
+==> training a deliberately weak candidate (v3) and gating it
+  HTTP 422 quality_gate_failed
+    - [REGRESSION] bench_f1 regressed: 0.1191 vs v1 0.6696 (allowed drop 0.0200, limit 0.6496)
+
+==> an operator cannot override the gate; only an admin can, with an audited reason
+  operator override -> HTTP 403 forbidden
+  devices unchanged: {'edge-01': 1, 'edge-02': 1, 'edge-03': 1}
+
+==> clearing injected faults, then rolling out v2 under an explicit quality policy (canary, then 50% batches)
+  deployment 2a14b442 created: batches=[['edge-01'], ['edge-02', 'edge-03']] skipped={}
+  IN_PROGRESS  edge-01=DISTRIBUTING edge-02=PENDING edge-03=PENDING
+  IN_PROGRESS  edge-01=ACTIVE edge-02=PENDING edge-03=PENDING
+  IN_PROGRESS  edge-01=ACTIVE edge-02=DISTRIBUTING edge-03=DISTRIBUTING
+  IN_PROGRESS  edge-01=ACTIVE edge-02=ACTIVE edge-03=ACTIVE
+  COMPLETED    edge-01=ACTIVE edge-02=ACTIVE edge-03=ACTIVE
+  quality gate: passed=True compared_against=v[1]
+  edge-01: active=anomaly-detector:2 previous=1 predict={'score': 0.034584976732730865, 'anomaly': False, 'latency_ms': 0.298708000627812, 'model': {'name': 'anomaly-detector', 'version': 2}}
+  edge-02: active=anomaly-detector:2 previous=1 predict={'score': 0.034584976732730865, 'anomaly': False, 'latency_ms': 0.5474169993249234, 'model': {'name': 'anomaly-detector', 'version': 2}}
+  edge-03: active=anomaly-detector:2 previous=1 predict={'score': 0.034584976732730865, 'anomaly': False, 'latency_ms': 0.8335830025316682, 'model': {'name': 'anomaly-detector', 'version': 2}}
+
+==> cutting edge-02's network (MQTT + control-plane HTTP) - simulated outage
+  local inference during outage #1: {'score': 0.034584976732730865, 'anomaly': False, 'latency_ms': 0.352167000528425, 'model': {'name': 'anomaly-detector', 'version': 2}}
+  local inference during outage #2: {'score': 0.034584976732730865, 'anomaly': False, 'latency_ms': 0.252417001320282, 'model': {'name': 'anomaly-detector', 'version': 2}}
+  local inference during outage #3: {'score': 0.034584976732730865, 'anomaly': False, 'latency_ms': 0.368334000086179, 'model': {'name': 'anomaly-detector', 'version': 2}}
+  control plane view: {"connectivity": "offline", "assessment": "offline", "reasons": ["no recent heartbeat; device may still be running inference locally"]}
+
+==> restoring network; device state reconciles
+  control plane view: {"name": "anomaly-detector", "version": 2, "sha256": "ee751b013a14f7b6afe0863a5531fec15fa6823fbf67e5609dfd955b671b0fe2"}
+
+==> fleet
+  edge-01: ONLINE   model=anomaly-detector:2
+  edge-02: ONLINE   model=anomaly-detector:2
+  edge-03: ONLINE   model=anomaly-detector:2
+
+==> deployments
+  2a14b442 v2 COMPLETED    all batches healthy
+  5362780c v2 ROLLED_BACK  edge-01: health check failed: inference error rate 100.0% > 5.0%
+  b163f323 v1 COMPLETED    all batches healthy
+
+==> Prometheus observations (http://127.0.0.1:19090; dashboard: http://127.0.0.1:13000)
+  deployments by final state: COMPLETED=2, ROLLED_BACK=1
+  rollbacks by trigger: automatic=1
+  per-device outcomes: verified=6, failed=1, rolled_back=1
+  devices connected: =3
+  active model version per device: edge-01,anomaly-detector=2, edge-02,anomaly-detector=2, edge-03,anomaly-detector=2
+  mqtt messages processed: telemetry=26, heartbeat=50, status=20, predictions=43
+  artifact downloads: ok=7
+python scripts/demo.py all  1.70s user 0.28s system 1% cpu 2:18.86 total

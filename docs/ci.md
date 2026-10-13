@@ -74,3 +74,12 @@ Causes and fixes:
 * `kubernetes-e2e`: the whole lifecycle worked (devices online, model trained, deployment COMPLETED on the pod); the final `/predict` call failed with `api token required`. The edge API requires its token and `scripts/k8s_smoke.py` did not send it (the script predates that protection and had not been re-run since). Fixed.
 * `tests`: all 8 failures were `deployment ... in {'COMPLETED'}` timeouts in `test_api.py` and `test_api_quality.py`. In-process test agents report the whole pytest process's memory, which on the runner (after ~80 tests with coverage) exceeded the default 1 GB health limit, so rollouts rolled back. The same mechanism had been found locally in one test; the fix is now in the shared harness (`Stack.deploy` relaxes the memory limit unless a test sets its own) and failure messages now include the deployment's state, reason and per-device errors. This explanation fits the pattern and the earlier local reproduction, but the CI log did not record the rollback reason, so the next run is the confirmation.
 * The suite is also slow on the runner (10 min 45 s vs ~6.5 min locally); the timeout budget (25 min) is sufficient.
+
+### Run 2 - after the first fixes (2026-10-13)
+| Job | Result |
+|---|---|
+| `static`, `kubernetes-manifests`, `containers` | passed |
+| `kubernetes-e2e` | **passed** (confirms the edge-token fix; the whole lifecycle runs on a k3d cluster in CI) |
+| `tls-profile` | failed: `verify_tls.py` asserted instantly that Prometheus had scraped every target; `edge-02` was still `down` right after start-up. A timing race in the check, not a TLS defect (the same job passed in run 1). The check now polls for up to 60 s and reports each target's last scrape error |
+| `tests` | 1 failed, 362 passed (6 min 37 s): `test_better_candidate_passes_and_then_rolls_out_normally` posts its own deployment body, so the harness-level memory relaxation from run 1's fix did not reach it. The relaxation now lives in the harness's shared `api()` call so every deployment request gets it |
+The run-1 explanation for the failing `tests` job is supported by this run: 7 of the 8 earlier failures disappeared with the harness change, and the failing test used a code path the change did not cover.

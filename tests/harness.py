@@ -124,6 +124,13 @@ class Stack:
     # -- API
     def api(self, method: str, path: str, role: str = "operator", **kw: Any) -> httpx.Response:
         headers = {"Authorization": f"Bearer {KEYS[role]}", **kw.pop("headers", {})}
+        body = kw.get("json")
+        if method == "POST" and path == "/api/v1/deployments" and isinstance(body, dict):
+            # In-process agents report the whole pytest process's memory, which grows past the default 1 GB health
+            # limit late in a long run (seen under coverage locally and on 2-vCPU CI runners) and would roll the
+            # deployment back. Real agents are separate processes (~65 MB). A test wanting a memory check sets its own.
+            criteria = {"max_memory_mb": 1_000_000, **(body.get("health_criteria") or {})}
+            kw["json"] = {**body, "health_criteria": criteria}
         verify: Any = ssl.create_default_context(cafile=str(self.ca)) if self.ca else True
         return httpx.request(method, self.cp.url + path, headers=headers, timeout=60, verify=verify, **kw)
 
@@ -285,10 +292,6 @@ class Stack:
             },
             **kw,
         }
-        # In-process agents report the whole pytest process's memory, which grows past the default 1 GB limit late in a
-        # long run (seen locally under coverage and on 2-vCPU CI runners) and would roll the deployment back. Real
-        # agents are separate processes (~65 MB). A test that wants a memory check passes its own limit.
-        body["health_criteria"] = {"max_memory_mb": 1_000_000, **body["health_criteria"]}  # type: ignore[dict-item]
         r = self.api("POST", "/api/v1/deployments", json=body)
         assert r.status_code in (200, 201), r.text
         return dict(r.json())
