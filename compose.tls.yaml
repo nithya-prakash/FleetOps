@@ -1,0 +1,193 @@
+# TLS overlay: every hop is encrypted and every certificate is verified (chain + hostname).
+#   python scripts/devcerts.py && docker compose -f compose.yaml -f compose.tls.yaml up -d --build --wait
+# DEVELOPMENT certificates only (see docs/security.md). Plaintext listeners are not published in this profile.
+x-edge-env: &edge-env
+  FLEETOPS_EDGE_MQTT_HOST: mosquitto
+  FLEETOPS_EDGE_ALLOW_FAULTS: "true"
+  FLEETOPS_EDGE_SENSOR_HZ: "5"
+  FLEETOPS_EDGE_LABEL_FRACTION: "0.2"
+
+services:
+  mosquitto:
+    environment:
+      MOSQUITTO_CONF: /mosquitto/config/mosquitto-tls.conf
+    secrets:
+      - mosquitto_passwd
+      - source: tls_ca
+        target: tls/ca.crt
+      - source: tls_mosquitto_crt
+        target: tls/server.crt
+      - source: tls_mosquitto_key
+        target: tls/server.key
+    ports: !override
+      - "${FLEETOPS_BIND:-127.0.0.1}:${FLEETOPS_MQTT_PORT:-11883}:8883"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8883"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mlflow:
+    secrets:
+      - mlflow_admin_password
+      - mlflow_flask_secret
+      - source: tls_ca
+        target: tls/ca.crt
+      - source: tls_mlflow_crt
+        target: tls/server.crt
+      - source: tls_mlflow_key
+        target: tls/server.key
+    healthcheck:
+      test: ["CMD", "python", "-c", "import ssl,urllib.request as u; u.urlopen('https://localhost:5000/health', context=ssl.create_default_context(cafile='/run/secrets/tls/ca.crt'), timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      start_period: 30s
+      retries: 5
+
+  mlflow-init:
+    environment:
+      MLFLOW_URL: https://mlflow:5000
+      MLFLOW_TRACKING_SERVER_CERT_PATH: /run/secrets/tls/ca.crt
+      FLEETOPS_MLFLOW_USERNAME: ${FLEETOPS_MLFLOW_USERNAME:-fleetops-cp}
+    secrets:
+      - mlflow_admin_password
+      - fleetops_mlflow_password
+      - source: tls_ca
+        target: tls/ca.crt
+
+  control-plane:
+    environment:
+      FLEETOPS_ENV: ${FLEETOPS_ENV:-dev}
+      FLEETOPS_SIMULATION_ENABLED: ${FLEETOPS_SIMULATION_ENABLED:-false}
+      FLEETOPS_REQUIRE_QUALITY_GATE: ${FLEETOPS_REQUIRE_QUALITY_GATE:-false}
+      FLEETOPS_DATABASE_URL: sqlite:////data/fleetops.db
+      FLEETOPS_ARTIFACT_ROOT: /data/artifacts
+      FLEETOPS_MLFLOW_TRACKING_URI: https://mlflow:5000
+      FLEETOPS_MLFLOW_CA_CERT: /run/secrets/tls/ca.crt
+      FLEETOPS_MLFLOW_USERNAME: ${FLEETOPS_MLFLOW_USERNAME:-fleetops-cp}
+      FLEETOPS_MQTT_HOST: mosquitto
+      FLEETOPS_MQTT_PORT: "8883"
+      FLEETOPS_MQTT_TLS_CA: /run/secrets/tls/ca.crt
+      FLEETOPS_MQTT_USERNAME: ${FLEETOPS_MQTT_USERNAME:-control-plane}
+      FLEETOPS_TLS_CERTFILE: /run/secrets/tls/server.crt
+      FLEETOPS_TLS_KEYFILE: /run/secrets/tls/server.key
+    secrets:
+      - fleetops_admin_api_key
+      - fleetops_operator_api_key
+      - fleetops_viewer_api_key
+      - fleetops_device_key_master
+      - fleetops_mqtt_password
+      - fleetops_mlflow_password
+      - fleetops_metrics_token
+      - source: tls_ca
+        target: tls/ca.crt
+      - source: tls_control_plane_crt
+        target: tls/server.crt
+      - source: tls_control_plane_key
+        target: tls/server.key
+    healthcheck:
+      test: ["CMD", "python", "-c", "import ssl,urllib.request as u; u.urlopen('https://localhost:8000/healthz', context=ssl.create_default_context(cafile='/run/secrets/tls/ca.crt'), timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      start_period: 30s
+      retries: 5
+
+  edge-01:
+    environment:
+      <<: *edge-env
+      FLEETOPS_EDGE_CONTROL_PLANE_URL: https://control-plane:8000
+      FLEETOPS_EDGE_CONTROL_PLANE_CA: /run/secrets/tls/ca.crt
+      FLEETOPS_EDGE_MQTT_PORT: "8883"
+      FLEETOPS_EDGE_MQTT_TLS_CA: /run/secrets/tls/ca.crt
+      FLEETOPS_EDGE_REQUIRE_TLS: "true"
+      FLEETOPS_EDGE_TLS_CERTFILE: /run/secrets/tls/server.crt
+      FLEETOPS_EDGE_TLS_KEYFILE: /run/secrets/tls/server.key
+    secrets:
+      - source: tls_ca
+        target: tls/ca.crt
+      - source: tls_edge_01_crt
+        target: tls/server.crt
+      - source: tls_edge_01_key
+        target: tls/server.key
+    healthcheck:
+      test: ["CMD", "python", "-c", "import ssl,urllib.request as u; u.urlopen('https://localhost:9100/livez', context=ssl.create_default_context(cafile='/run/secrets/tls/ca.crt'), timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+
+  edge-02:
+    environment:
+      <<: *edge-env
+      FLEETOPS_EDGE_CONTROL_PLANE_URL: https://control-plane:8000
+      FLEETOPS_EDGE_CONTROL_PLANE_CA: /run/secrets/tls/ca.crt
+      FLEETOPS_EDGE_MQTT_PORT: "8883"
+      FLEETOPS_EDGE_MQTT_TLS_CA: /run/secrets/tls/ca.crt
+      FLEETOPS_EDGE_REQUIRE_TLS: "true"
+      FLEETOPS_EDGE_TLS_CERTFILE: /run/secrets/tls/server.crt
+      FLEETOPS_EDGE_TLS_KEYFILE: /run/secrets/tls/server.key
+    secrets:
+      - source: tls_ca
+        target: tls/ca.crt
+      - source: tls_edge_02_crt
+        target: tls/server.crt
+      - source: tls_edge_02_key
+        target: tls/server.key
+    healthcheck:
+      test: ["CMD", "python", "-c", "import ssl,urllib.request as u; u.urlopen('https://localhost:9100/livez', context=ssl.create_default_context(cafile='/run/secrets/tls/ca.crt'), timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+
+  edge-03:
+    environment:
+      <<: *edge-env
+      FLEETOPS_EDGE_CONTROL_PLANE_URL: https://control-plane:8000
+      FLEETOPS_EDGE_CONTROL_PLANE_CA: /run/secrets/tls/ca.crt
+      FLEETOPS_EDGE_MQTT_PORT: "8883"
+      FLEETOPS_EDGE_MQTT_TLS_CA: /run/secrets/tls/ca.crt
+      FLEETOPS_EDGE_REQUIRE_TLS: "true"
+      FLEETOPS_EDGE_TLS_CERTFILE: /run/secrets/tls/server.crt
+      FLEETOPS_EDGE_TLS_KEYFILE: /run/secrets/tls/server.key
+      FLEETOPS_EDGE_SENSOR_SEED: "3"
+      FLEETOPS_EDGE_SENSOR_SCENARIO: ${EDGE3_SCENARIO:-normal}
+    secrets:
+      - source: tls_ca
+        target: tls/ca.crt
+      - source: tls_edge_03_crt
+        target: tls/server.crt
+      - source: tls_edge_03_key
+        target: tls/server.key
+    healthcheck:
+      test: ["CMD", "python", "-c", "import ssl,urllib.request as u; u.urlopen('https://localhost:9100/livez', context=ssl.create_default_context(cafile='/run/secrets/tls/ca.crt'), timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+
+  prometheus:
+    volumes:
+      - ./monitoring/prometheus/prometheus-tls.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    secrets:
+      - source: metrics_token
+        target: metrics_token
+      - source: tls_ca
+        target: tls/ca.crt
+
+secrets:
+  tls_ca: {file: ./deploy/secrets/tls/ca.crt}
+  tls_mosquitto_crt: {file: ./deploy/secrets/tls/mosquitto.crt}
+  tls_mosquitto_key: {file: ./deploy/secrets/tls/mosquitto.key}
+  tls_control_plane_crt: {file: ./deploy/secrets/tls/control-plane.crt}
+  tls_control_plane_key: {file: ./deploy/secrets/tls/control-plane.key}
+  tls_mlflow_crt: {file: ./deploy/secrets/tls/mlflow.crt}
+  tls_mlflow_key: {file: ./deploy/secrets/tls/mlflow.key}
+  tls_edge_01_crt: {file: ./deploy/secrets/tls/edge-01.crt}
+  tls_edge_01_key: {file: ./deploy/secrets/tls/edge-01.key}
+  tls_edge_02_crt: {file: ./deploy/secrets/tls/edge-02.crt}
+  tls_edge_02_key: {file: ./deploy/secrets/tls/edge-02.key}
+  tls_edge_03_crt: {file: ./deploy/secrets/tls/edge-03.crt}
+  tls_edge_03_key: {file: ./deploy/secrets/tls/edge-03.key}

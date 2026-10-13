@@ -1,0 +1,161 @@
+name: ci
+on:
+  push: {branches: [main]}
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * 1"   # weekly: new CVEs appear without any code change
+
+permissions:
+  contents: read           # least privilege: no job needs to write to the repository
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  UV_VERSION: "0.12.5"     # keep in sync with the uv image pin in the Dockerfile
+  PROMETHEUS_IMAGE: prom/prometheus:v2.55.1@sha256:2659f4c2ebb718e7695cb9b25ffa7d6be64db013daba13e05c875451cf51b0d3   # same pin as compose.yaml
+  ACTIONLINT_IMAGE: rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
+
+jobs:
+  # Fast feedback (no containers started): lockfile, formatting, lint, types, workflow lint, alert rules, Compose files.
+  static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262          # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065      # v5.6.0
+        with: {python-version: "3.12"}
+      - name: Install locked dependencies
+        run: |
+          pip install "uv==${UV_VERSION}"
+          uv lock --check                       # fails if uv.lock is out of date with pyproject.toml
+          uv sync --frozen --all-extras
+      - run: .venv/bin/ruff format --check .
+      - run: .venv/bin/ruff check .
+      - run: .venv/bin/mypy
+      - name: Lint the workflow files
+        run: docker run --rm -v "$PWD:/repo" -w /repo "$ACTIONLINT_IMAGE" -color
+      - name: Validate Prometheus alert rules
+        run: docker run --rm --entrypoint promtool -v "$PWD/monitoring/prometheus:/p:ro" "$PROMETHEUS_IMAGE" check rules /p/alerts.yml
+      - name: Validate Docker Compose files (plain and TLS profiles)
+        run: |
+          cp .env.example .env
+          .venv/bin/python scripts/provision.py
+          .venv/bin/python scripts/devcerts.py
+          docker compose config -q
+          docker compose -f compose.yaml -f compose.tls.yaml config -q
+
+  # Unit + integration + end-to-end tests, including the real Mosquitto broker (the project's hardened image).
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262          # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065      # v5.6.0
+        with: {python-version: "3.12"}
+      - run: pip install "uv==${UV_VERSION}" && uv sync --frozen --all-extras
+      - name: Provision dev credentials and start the project's hardened Mosquitto image
+        run: |
+          cp .env.example .env
+          .venv/bin/python scripts/provision.py
+          docker build -q --target mosquitto -t fleetops-mosquitto:dev .
+          docker run -d --name mosq -p 127.0.0.1:18830:1883 --read-only --cap-drop ALL \
+            --tmpfs /mosquitto/run:uid=1883,gid=1883,mode=0700 --tmpfs /tmp \
+            -v "$PWD/deploy/secrets/mosquitto_passwd:/run/secrets/mosquitto_passwd:ro" fleetops-mosquitto:dev
+          for _ in $(seq 1 30); do                       # wait for the listener instead of sleeping a fixed time
+            (exec 3<>/dev/tcp/127.0.0.1/18830) 2>/dev/null && break
+            sleep 1
+          done
+          (exec 3<>/dev/tcp/127.0.0.1/18830)
+      - name: Tests (unit, integration, end-to-end, real MQTT broker)
+        timeout-minutes: 25
+        run: .venv/bin/pytest -q --cov --cov-report=term --cov-report=xml --cov-fail-under=90
+        env:
+          FLEETOPS_TEST_MQTT_HOST: 127.0.0.1
+          FLEETOPS_TEST_MQTT_PORT: "18830"
+          MLFLOW_DISABLE_AGENT_HINT: "1"
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02      # v4.6.2
+        with: {name: coverage-xml, path: coverage.xml, if-no-files-found: ignore, retention-days: 7}
+      - if: failure()
+        run: docker logs mosq --tail 100
+
+  containers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262          # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065      # v5.6.0
+        with: {python-version: "3.12"}
+      - run: pip install "uv==${UV_VERSION}" && uv sync --frozen --all-extras
+      - run: cp .env.example .env && .venv/bin/python scripts/provision.py
+      - run: docker compose config -q
+      - name: Build images (locked, hash-verified dependencies; digest-pinned bases)
+        run: docker compose build
+      - name: Vulnerability scan (fails on fixable HIGH/CRITICAL; see docs/supply-chain.md)
+        run: scripts/trivy_scan.sh
+      - name: Boot the stack, verify security posture, run the live lifecycle demo
+        run: |
+          docker compose up -d --wait --wait-timeout 300
+          .venv/bin/python scripts/verify_security.py
+          .venv/bin/python scripts/demo.py all
+      - name: Dashboard queries return data
+        run: .venv/bin/python scripts/verify_dashboard.py
+      - if: failure()
+        run: docker compose logs --tail=200
+      - if: always()
+        run: docker compose down -v
+
+  tls-profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262          # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065      # v5.6.0
+        with: {python-version: "3.12"}
+      - run: pip install "uv==${UV_VERSION}" && uv sync --frozen --all-extras
+      - run: cp .env.example .env && .venv/bin/python scripts/provision.py
+      - name: Start the stack with TLS everywhere (development CA) and verify enforcement
+        run: |
+          .venv/bin/python scripts/devcerts.py
+          docker compose -f compose.yaml -f compose.tls.yaml up -d --build --wait --wait-timeout 300
+          FLEETOPS_TLS=1 .venv/bin/python scripts/verify_tls.py
+          FLEETOPS_TLS=1 .venv/bin/python scripts/demo.py bootstrap
+          FLEETOPS_TLS=1 .venv/bin/python scripts/demo.py deploy-v1
+      - if: failure()
+        run: docker compose -f compose.yaml -f compose.tls.yaml logs --tail=200
+      - if: always()
+        run: docker compose -f compose.yaml -f compose.tls.yaml down -v
+
+  kubernetes-manifests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262          # v4.4.0
+      - name: Validate manifests against the Kubernetes schemas
+        run: |
+          curl -fsSL -o kubeconform.tgz https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          echo "95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73  kubeconform.tgz" | sha256sum -c -
+          tar -xzf kubeconform.tgz kubeconform
+          ./kubeconform -strict -summary deploy/k3s/fleetops.yaml
+
+  kubernetes-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    needs: [static]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262          # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065      # v5.6.0
+        with: {python-version: "3.12"}
+      - run: pip install "uv==${UV_VERSION}" && uv sync --frozen --all-extras
+      - name: Install k3d v5.9.0 (checksum-verified)
+        run: |
+          curl -fsSL -o k3d https://github.com/k3d-io/k3d/releases/download/v5.9.0/k3d-linux-amd64
+          echo "06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0  k3d" | sha256sum -c -
+          sudo install -m 0755 k3d /usr/local/bin/k3d
+      - run: cp .env.example .env && .venv/bin/python scripts/provision.py
+      - run: docker compose build
+      - name: Deploy deploy/k3s/fleetops.yaml to a disposable cluster and smoke-test it
+        run: scripts/k3d_test.sh

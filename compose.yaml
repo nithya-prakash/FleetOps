@@ -1,0 +1,189 @@
+# FleetOps local stack. DEVELOPMENT profile: plaintext MQTT/HTTP and throw-away credentials from .env.
+# Run `make init` first (generates deploy/secrets). Not a production configuration.
+#
+# Exposure: every published port binds to ${FLEETOPS_BIND:-127.0.0.1} (loopback). Services talk to each other
+# on the internal compose network by service name, independent of the published ports.
+# Credentials are mounted as Docker secrets (/run/secrets/*), not passed as environment variables.
+name: fleetops
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: ["/tmp"]
+  restart: unless-stopped
+
+x-edge: &edge
+  <<: *hardening
+  build: {context: ., target: edge}
+  image: fleetops-edge:dev
+  depends_on:
+    mosquitto: {condition: service_healthy}
+    control-plane: {condition: service_healthy}
+  environment: &edge-env
+    FLEETOPS_EDGE_MQTT_HOST: mosquitto
+    FLEETOPS_EDGE_CONTROL_PLANE_URL: http://control-plane:8000
+    FLEETOPS_EDGE_ALLOW_FAULTS: "true"     # simulation controls; never enable on real devices
+    FLEETOPS_EDGE_SENSOR_HZ: "5"
+    FLEETOPS_EDGE_LABEL_FRACTION: "0.2"
+    FLEETOPS_EDGE_PREDICT_RATE_PER_SECOND: ${FLEETOPS_EDGE_PREDICT_RATE_PER_SECOND:-500}   # raised in capacity tests
+    FLEETOPS_EDGE_PREDICT_BURST: ${FLEETOPS_EDGE_PREDICT_BURST:-1000}
+
+services:
+  mosquitto:
+    <<: *hardening
+    build: {context: ., target: mosquitto}
+    image: fleetops-mosquitto:dev
+    tmpfs:
+      - /tmp
+      - /mosquitto/run:uid=1883,gid=1883,mode=0700   # private copy of the password file (0600)
+    volumes: [mosquitto-data:/mosquitto/data]
+    secrets: [mosquitto_passwd]
+    ports: ["${FLEETOPS_BIND:-127.0.0.1}:${FLEETOPS_MQTT_PORT:-11883}:1883"]
+    healthcheck:
+      # TCP-level check on purpose: an authenticated check would put the password on a command line.
+      # Authentication is verified by the integration tests and by the agents connecting.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 1883"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mlflow:
+    <<: *hardening
+    build: {context: ., target: mlflow-server}
+    image: fleetops-mlflow:dev
+    volumes: [mlflow-data:/data]
+    secrets: [mlflow_admin_password, mlflow_flask_secret]
+    ports: ["${FLEETOPS_BIND:-127.0.0.1}:${FLEETOPS_MLFLOW_PORT:-15000}:5000"]
+
+  mlflow-init:    # one-shot: creates/rotates the non-admin MLflow account used by the control plane
+    <<: *hardening
+    restart: "no"
+    build: {context: ., target: control-plane}
+    image: fleetops-control-plane:dev
+    command: ["python", "-m", "fleetops.registry.mlflow_admin"]
+    environment:
+      MLFLOW_URL: http://mlflow:5000
+      FLEETOPS_MLFLOW_USERNAME: ${FLEETOPS_MLFLOW_USERNAME:-fleetops-cp}
+    secrets: [mlflow_admin_password, fleetops_mlflow_password]
+    depends_on:
+      mlflow: {condition: service_healthy}
+
+  control-plane:
+    <<: *hardening
+    build: {context: ., target: control-plane}
+    image: fleetops-control-plane:dev
+    environment:
+      FLEETOPS_ENV: ${FLEETOPS_ENV:-dev}
+      FLEETOPS_SIMULATION_ENABLED: ${FLEETOPS_SIMULATION_ENABLED:-false}
+      FLEETOPS_REQUIRE_QUALITY_GATE: ${FLEETOPS_REQUIRE_QUALITY_GATE:-false}
+      FLEETOPS_RATE_LIMIT_PER_SECOND: ${FLEETOPS_RATE_LIMIT_PER_SECOND:-50}      # load tests raise these explicitly
+      FLEETOPS_RATE_LIMIT_BURST: ${FLEETOPS_RATE_LIMIT_BURST:-100}
+      FLEETOPS_OFFLINE_AFTER_SECONDS: ${FLEETOPS_OFFLINE_AFTER_SECONDS:-20}
+      FLEETOPS_DATABASE_URL: sqlite:////data/fleetops.db
+      FLEETOPS_ARTIFACT_ROOT: /data/artifacts
+      FLEETOPS_MLFLOW_TRACKING_URI: http://mlflow:5000
+      FLEETOPS_MLFLOW_USERNAME: ${FLEETOPS_MLFLOW_USERNAME:-fleetops-cp}
+      FLEETOPS_MQTT_HOST: mosquitto
+      FLEETOPS_MQTT_USERNAME: ${FLEETOPS_MQTT_USERNAME:-control-plane}
+    secrets:
+      - fleetops_admin_api_key
+      - fleetops_operator_api_key
+      - fleetops_viewer_api_key
+      - fleetops_device_key_master
+      - fleetops_mqtt_password
+      - fleetops_mlflow_password
+      - fleetops_metrics_token
+    volumes: [cp-data:/data]
+    ports: ["${FLEETOPS_BIND:-127.0.0.1}:${FLEETOPS_CP_PORT:-18000}:8000"]
+    depends_on:
+      mosquitto: {condition: service_healthy}
+      mlflow: {condition: service_healthy}
+      mlflow-init: {condition: service_completed_successfully}
+
+  edge-01:
+    <<: *edge
+    environment: {<<: *edge-env, FLEETOPS_EDGE_DEVICE_ID: edge-01, FLEETOPS_EDGE_SENSOR_SEED: "1"}
+    secrets: [{source: edge_01_secret, target: fleetops_edge_device_secret}, fleetops_edge_api_token, fleetops_edge_metrics_token]
+    volumes: [edge-01-data:/data]
+    ports: ["${FLEETOPS_BIND:-127.0.0.1}:${EDGE1_PORT:-19101}:9100"]
+
+  edge-02:
+    <<: *edge
+    environment: {<<: *edge-env, FLEETOPS_EDGE_DEVICE_ID: edge-02, FLEETOPS_EDGE_SENSOR_SEED: "2"}
+    secrets: [{source: edge_02_secret, target: fleetops_edge_device_secret}, fleetops_edge_api_token, fleetops_edge_metrics_token]
+    volumes: [edge-02-data:/data]
+    ports: ["${FLEETOPS_BIND:-127.0.0.1}:${EDGE2_PORT:-19102}:9100"]
+
+  edge-03:
+    <<: *edge
+    environment:
+      <<: *edge-env
+      FLEETOPS_EDGE_DEVICE_ID: edge-03
+      FLEETOPS_EDGE_SENSOR_SEED: "3"
+      FLEETOPS_EDGE_SENSOR_SCENARIO: ${EDGE3_SCENARIO:-normal}   # set to "drift" to exercise drift monitoring
+    secrets: [{source: edge_03_secret, target: fleetops_edge_device_secret}, fleetops_edge_api_token, fleetops_edge_metrics_token]
+    volumes: [edge-03-data:/data]
+    ports: ["${FLEETOPS_BIND:-127.0.0.1}:${EDGE3_PORT:-19103}:9100"]
+
+  prometheus:
+    <<: *hardening
+    image: prom/prometheus:v2.55.1@sha256:2659f4c2ebb718e7695cb9b25ffa7d6be64db013daba13e05c875451cf51b0d3
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.time=7d"]
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    secrets: [{source: metrics_token, target: metrics_token}]
+    ports: ["${FLEETOPS_BIND:-127.0.0.1}:${FLEETOPS_PROM_PORT:-19090}:9090"]
+    user: "65534:65534"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  grafana:
+    <<: *hardening
+    image: grafana/grafana:11.3.0@sha256:a0f881232a6fb71a0554a47d0fe2203b6888fe77f4cefb7ea62bed7eb54e13c3
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    secrets: [grafana_admin_password]
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports: ["${FLEETOPS_BIND:-127.0.0.1}:${FLEETOPS_GRAFANA_PORT:-13000}:3000"]
+    depends_on: [prometheus]
+
+secrets:
+  fleetops_admin_api_key: {file: ./deploy/secrets/fleetops_admin_api_key}
+  fleetops_operator_api_key: {file: ./deploy/secrets/fleetops_operator_api_key}
+  fleetops_viewer_api_key: {file: ./deploy/secrets/fleetops_viewer_api_key}
+  fleetops_device_key_master: {file: ./deploy/secrets/fleetops_device_key_master}
+  fleetops_mqtt_password: {file: ./deploy/secrets/fleetops_mqtt_password}
+  fleetops_mlflow_password: {file: ./deploy/secrets/fleetops_mlflow_password}
+  mlflow_admin_password: {file: ./deploy/secrets/mlflow_admin_password}
+  mlflow_flask_secret: {file: ./deploy/secrets/mlflow_flask_secret}
+  grafana_admin_password: {file: ./deploy/secrets/grafana_admin_password}
+  mosquitto_passwd: {file: ./deploy/secrets/mosquitto_passwd}
+  fleetops_metrics_token: {file: ./deploy/secrets/fleetops_metrics_token}
+  metrics_token: {file: ./deploy/secrets/metrics_token}
+  fleetops_edge_api_token: {file: ./deploy/secrets/fleetops_edge_api_token}
+  fleetops_edge_metrics_token: {file: ./deploy/secrets/fleetops_edge_metrics_token}
+  edge_01_secret: {file: ./deploy/secrets/edge-01.secret}
+  edge_02_secret: {file: ./deploy/secrets/edge-02.secret}
+  edge_03_secret: {file: ./deploy/secrets/edge-03.secret}
+
+volumes:
+  cp-data:
+  mlflow-data:
+  mosquitto-data:
+  prometheus-data:
+  grafana-data:
+  edge-01-data:
+  edge-02-data:
+  edge-03-data:

@@ -1,0 +1,127 @@
+"""Smoke test of a deployed K3s/Kubernetes stack (deploy/k3s/fleetops.yaml) through kubectl port-forward.
+
+    python scripts/k8s_smoke.py        # needs kubectl context pointing at the cluster, secrets from provision.py
+
+Registers edge-01, trains a model through the authenticated MLflow, deploys it with a quality gate and checks the
+pod serves local inference and reports health. Exit code 0 only if every step succeeded.
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+ROOT = Path(__file__).resolve().parent.parent
+ENV = {
+    k.strip(): v.strip()
+    for k, _, v in (ln.partition("=") for ln in (ROOT / ".env").read_text().splitlines() if "=" in ln and ln[0] != "#")
+}
+CP, EDGE = "http://127.0.0.1:18100", "http://127.0.0.1:19100"
+FEATURES = [2.0, 65.0, 6.0, 12.0, 1480.0, 70.0]
+
+
+def api(method: str, path: str, role: str = "operator", **kw: Any) -> httpx.Response:
+    headers = {"Authorization": f"Bearer {ENV[f'FLEETOPS_{role.upper()}_API_KEY']}"}
+    return httpx.request(method, CP + path, headers=headers, timeout=180, **kw)
+
+
+def wait(cond: Any, what: str, timeout: float = 120.0) -> Any:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        try:
+            if result := cond():
+                return result
+        except httpx.HTTPError:
+            pass
+        time.sleep(1)
+    raise SystemExit(f"FAIL  timed out waiting for {what}")
+
+
+def step(msg: str) -> None:
+    print(f"ok    {msg}", flush=True)
+
+
+def main() -> int:
+    forwards = [
+        subprocess.Popen(
+            ["kubectl", "-n", "fleetops", "port-forward", "svc/control-plane", "18100:8000"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ),
+        subprocess.Popen(
+            ["kubectl", "-n", "fleetops", "port-forward", "pod/edge-01-0", "19100:9100"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ),
+    ]
+    try:
+        viewer = {"Authorization": f"Bearer {ENV['FLEETOPS_VIEWER_API_KEY']}"}  # detailed readiness needs a key
+        wait(
+            lambda: httpx.get(CP + "/readyz", headers=viewer, timeout=5).json().get("mlflow") is True,
+            "control plane ready incl. MLflow",
+        )
+        ready = httpx.get(CP + "/readyz", headers=viewer, timeout=5).json()
+        assert ready["database"] and ready["mqtt"] is True and ready["mlflow"] is True, ready
+        step(f"control plane ready (db, mqtt, authenticated mlflow): {ready}")
+        assert api(
+            "POST", "/api/v1/devices/register", "admin", json={"device_id": "edge-01", "group": "line-a"}
+        ).status_code in (201, 409)
+        wait(
+            lambda: api("GET", "/api/v1/devices/edge-01", "viewer").json()["status"] == "ONLINE",
+            "edge-01 online over MQTT",
+        )
+        step("edge-01 registered and ONLINE (per-device MQTT credentials from a mounted secret)")
+        t = api(
+            "POST",
+            "/api/v1/models/train",
+            json={"model_name": "anomaly-detector", "params": {"n_samples": 1500, "epochs": 10}},
+        )
+        assert t.status_code == 201, t.text
+        version = t.json()["version"]
+        step(f"trained + registered anomaly-detector:{version} via MLflow (basic-auth service account)")
+        gate = {"metrics": {"bench_f1": {"min": 0.0}}}
+        dep = api(
+            "POST",
+            "/api/v1/deployments",
+            json={
+                "model_name": "anomaly-detector",
+                "model_version": version,
+                "group": "line-a",
+                "quality_gate": gate,
+                "health_criteria": {"observation_seconds": 3, "min_inferences": 5, "max_cpu_percent": 100},
+            },
+        )
+        assert dep.status_code == 201, dep.text
+        dep_id = dep.json()["deployment_id"]
+        final = wait(
+            lambda: (
+                (d := api("GET", f"/api/v1/deployments/{dep_id}", "viewer").json())["state"]
+                in ("COMPLETED", "FAILED", "ROLLED_BACK")
+                and d
+            ),
+            "deployment to finish",
+        )
+        assert final["state"] == "COMPLETED", final
+        step(f"deployment {dep_id[:8]} COMPLETED (stage -> activate -> health verified on the pod)")
+        pred = httpx.post(EDGE + "/predict", json={"features": FEATURES}, timeout=10)
+        assert pred.status_code == 200 and pred.json()["model"]["version"] == version, pred.text
+        step(f"pod serves local inference with model v{version}: {pred.json()['model']}")
+        assert httpx.post(EDGE + "/predict", json={"features": [1.0]}, timeout=10).status_code == 422
+        step("malformed input rejected with 422")
+        print("\nall Kubernetes smoke checks passed")
+        return 0
+    except (AssertionError, SystemExit) as exc:
+        print(f"FAIL  {exc}")
+        return 1
+    finally:
+        for p in forwards:
+            p.terminate()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

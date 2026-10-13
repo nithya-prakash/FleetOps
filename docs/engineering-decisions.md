@@ -1,0 +1,15 @@
+# Engineering decisions
+
+Each entry: the decision, why, the alternative considered, and what it costs. Evidence is in the linked documents.
+
+1. **Safe model format (safetensors + NumPy runtime), not pickle/TorchScript on the edge.** A model artifact is data, not code, so a tampered artifact cannot execute code on a device; the edge image has no PyTorch (71 MB). Cost: only MLP-style models are supported until a new format is added. Re-checked against ONNX Runtime in `docs/edge-inference-benchmarks.md`: no speed gain for this model, 10-15x slower load, +76 MB, so NumPy stays.
+2. **MQTT with persistent sessions and signed, expiring, deduplicated commands.** Devices are behind plant networks and reconnect often; commands carry `command_id`, per-device generation and expiry, so a late or repeated message cannot re-apply an old state. Cost: the engine must track acknowledgements and retry; found and fixed several races this way (`docs/reliability-test-results.md`).
+3. **Pull artifacts over HTTPS, command over MQTT.** Large payloads do not belong on the broker; the download is authenticated per device and authorised against an in-flight deployment, and verified by hash on both sides.
+4. **Rollout state machine with canary and automatic rollback; "last known-good" is never removed.** A failed update must never leave a device without a working model. A rolled-back deployment is final (a new one is created) so history stays truthful.
+5. **Quality gate on a fixed benchmark.** Candidates are compared on the same evaluation suite, fail closed on missing metrics, overrides are admin-only and audited. The benchmark is synthetic, so it proves the mechanism, not factory performance.
+6. **SQLite and a single control-plane replica.** Simplest thing that is correct for the measured load; explicitly not HA. Trade-offs, limits and the unbuilt target design are in `docs/capacity-and-scaling.md`.
+7. **Security defaults are on, verification is never disabled.** Loopback-only ports, secrets as files, role-based API keys, rate and size limits, audited denials, TLS/mTLS with verification (tests include expired, wrong-name and untrusted certificates). The development CA is not a PKI (`docs/security.md`).
+8. **Failure injection before claims.** Twelve scenarios with expected behaviour written first, assertions on real device state, persisted state, audit log and metrics, and mutation checks to prove tests can fail.
+9. **Measure, then state.** Load and benchmark numbers come from reproducible scripts with the environment recorded; no target numbers were invented; inconclusive results (10-minute soak, one unexplained 22 s warm-up deployment, one unreproduced test flake) are reported as such.
+10. **Supply chain**: `uv.lock` with hashes, digest-pinned base images, pinned Trivy with a self-test, SHA-pinned workflow actions. The workflow has never run on GitHub.
+11. **Things deliberately not built**: PostgreSQL/leader election, Alertmanager, OPC UA/PLC connectors, the vision extension (licence and weight), real-hardware validation.

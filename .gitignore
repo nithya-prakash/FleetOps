@@ -1,0 +1,22 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.env
+deploy/secrets/
+data/
+mlruns/
+mlflow.db
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+
+# generated measurement output
+load_results/
+benchmark_results/
+backups/

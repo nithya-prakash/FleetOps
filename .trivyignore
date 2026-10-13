@@ -1,0 +1,4 @@
+# Accepted vulnerability exceptions. One ID per line, each preceded by a justification and an expiry
+# (Trivy skips an entry after its `exp:` date, so exceptions cannot silently become permanent).
+# Format:   CVE-YYYY-NNNN exp:YYYY-MM-DD
+# Currently there are none.

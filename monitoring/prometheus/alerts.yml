@@ -1,0 +1,108 @@
+groups:
+  - name: fleetops-operational
+    rules:
+      - alert: EdgeDeviceOffline
+        expr: fleetops_device_connected == 0
+        for: 30s
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.device_id }} has no control-plane connectivity"
+          description: "The device may still be running inference locally. See docs/runbooks/device-offline.md."
+      - alert: EdgeDeviceWithoutModel
+        expr: fleetops_device_model_version == 0 and on (device_id) fleetops_device_connected == 1
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.device_id }} is online but has no active model (inference returns 503)"
+          description: "Never deployed, or rolled back with no known-good model. See docs/runbooks/rollback.md."
+      - alert: DeviceClockSkew
+        expr: abs(fleetops_device_clock_skew_seconds) > 30
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.device_id }} clock differs from the control plane by {{ $value }}s"
+          description: "Commands may be rejected as EXPIRED or CLOCK_SKEW. Check NTP on the device."
+      - alert: EdgeDiskLow
+        expr: fleetops_device_disk_free_mb < 256
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.device_id }} has only {{ $value }} MB free for models"
+          description: "Model updates will be refused (INSUFFICIENT_STORAGE) below the configured reserve. Free space or enlarge the volume; the running model is unaffected."
+      - alert: HeartbeatStale
+        expr: fleetops_device_heartbeat_age_seconds > 60
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.device_id }} heartbeat is {{ $value }}s old"
+      - alert: DeploymentRolledBack
+        expr: increase(fleetops_rollbacks_total[10m]) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "A deployment was rolled back ({{ $labels.trigger }})"
+          description: "See docs/runbooks/rollback.md and GET /api/v1/audit/events for the reason."
+      - alert: EdgeInferenceFailures
+        expr: sum by (device_id) (rate(fleetops_edge_inference_failures_total[1m])) > 0.1
+        for: 30s
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.device_id }} inference failures"
+      - alert: EdgeInferenceLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le, device_id) (rate(fleetops_edge_inference_latency_seconds_bucket[1m]))) > 0.05
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.device_id }} p95 inference latency above 50ms"
+      - alert: MqttMessageFailures
+        expr: increase(fleetops_mqtt_processing_failures_total[5m]) > 5
+        labels: {severity: warning}
+        annotations:
+          summary: "Control plane rejected {{ $value }} MQTT messages in 5m ({{ $labels.reason }})"
+  - name: fleetops-model-quality
+    rules:
+      - alert: InputDriftDetected
+        expr: increase(fleetops_drift_reports_total{status="ALERT"}[15m]) > 0
+        labels: {severity: info}
+        annotations:
+          summary: "Input drift ALERT: review required (not an accuracy statement)"
+          description: "See docs/runbooks/drift-review.md. No deployment is triggered automatically."
+  - name: fleetops-platform
+    rules:
+      - alert: ControlPlaneDown
+        expr: up{job="fleetops-control-plane"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Control plane is not scrapable"
+          description: "No new rollouts or monitoring until it returns; devices keep serving. See docs/troubleshooting.md."
+      - alert: ControlPlaneMqttDisconnected
+        expr: fleetops_mqtt_connected == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Control plane is disconnected from the MQTT broker"
+          description: "See docs/runbooks/mqtt-outage.md."
+      - alert: RollbackFailed
+        expr: increase(fleetops_rollback_failures_total[10m]) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "A device rejected or failed a rollback/abort; it may still run the bad model"
+          description: "See docs/runbooks/failed-rollback.md."
+      - alert: ArtifactIntegrityFailure
+        expr: increase(fleetops_artifact_integrity_failures_total[10m]) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "A model artifact failed hash/size verification"
+          description: "It was not served or activated. See docs/runbooks/artifact-corruption.md."
+      - alert: AuthDenialsHigh
+        expr: increase(fleetops_auth_denied_total[5m]) > 20
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} denied management requests in 5m (reason {{ $labels.reason }})"
+          description: "Possible credential guessing or a misconfigured client; check the audit log. See docs/security.md."
+      - alert: RateLimitingActive
+        expr: increase(fleetops_rate_limited_total[5m]) > 50
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} requests answered 429 in 5m (scope {{ $labels.scope }})"
+          description: "Either a client misbehaves or the limit is too low for legitimate load (see docs/load-test-results.md)."

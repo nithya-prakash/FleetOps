@@ -1,0 +1,213 @@
+# OPTIONAL milestone: K3s/Kubernetes deployment of the central side + one edge agent.
+# Mirrors the Compose profile: credentials are mounted as secret FILES (not env vars), MLflow runs with
+# basic-auth and the control plane uses a non-admin service account, workloads are non-root / read-only.
+#
+# Secrets are deliberately NOT part of this manifest (a manifest with placeholder passwords is a trap):
+#   python scripts/provision.py          # generates deploy/secrets from .env (dev only)
+#   scripts/k8s_secrets.sh               # creates the Secrets below from those files
+# For real clusters use your secret manager (sealed-secrets / external-secrets) to create the same Secrets:
+#   fleetops-secrets (fleetops_* keys), mlflow-secrets, fleetops-mqtt-passwd, edge-01-secret.
+# Images (build with `docker compose build`) must be available to the cluster, e.g. `k3d image import`.
+apiVersion: v1
+kind: Namespace
+metadata: {name: fleetops}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: mosquitto, namespace: fleetops}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: mosquitto}}
+  template:
+    metadata: {labels: {app: mosquitto}}
+    spec:
+      automountServiceAccountToken: false   # no API access needed; also avoids clashing with /run/secrets
+      securityContext: {runAsUser: 1883, runAsGroup: 1883, runAsNonRoot: true}
+      containers:
+        - name: mosquitto
+          image: fleetops-mosquitto:dev      # config baked in; password file arrives as a secret (see header)
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 1883}]
+          volumeMounts:
+            - {name: passwd, mountPath: /run/secrets, readOnly: true}
+            - {name: run, mountPath: /mosquitto/run}
+            - {name: data, mountPath: /mosquitto/data}
+            - {name: tmp, mountPath: /tmp}
+          readinessProbe: {tcpSocket: {port: 1883}, periodSeconds: 5}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumes:
+        - {name: passwd, secret: {secretName: fleetops-mqtt-passwd, defaultMode: 0444}}
+        - {name: run, emptyDir: {medium: Memory}}
+        - {name: data, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: mosquitto, namespace: fleetops}
+spec:
+  selector: {app: mosquitto}
+  ports: [{port: 1883, targetPort: 1883}]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: mlflow-data, namespace: fleetops}
+spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 2Gi}}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: control-plane-data, namespace: fleetops}
+spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 2Gi}}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: mlflow, namespace: fleetops}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: mlflow}}
+  template:
+    metadata: {labels: {app: mlflow}}
+    spec:
+      automountServiceAccountToken: false   # no API access needed; also avoids clashing with /run/secrets
+      securityContext: {runAsUser: 10001, runAsNonRoot: true, fsGroup: 10001}
+      containers:
+        - name: mlflow
+          image: fleetops-mlflow:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 5000}]
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: secrets, mountPath: /run/secrets, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+          readinessProbe: {httpGet: {path: /health, port: 5000}, periodSeconds: 5}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumes:
+        - {name: data, persistentVolumeClaim: {claimName: mlflow-data}}
+        - {name: secrets, secret: {secretName: mlflow-secrets, defaultMode: 0444}}
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: mlflow, namespace: fleetops}
+spec:
+  selector: {app: mlflow}
+  ports: [{port: 5000, targetPort: 5000}]
+---
+# One-shot: creates/rotates the non-admin MLflow account the control plane authenticates as.
+apiVersion: batch/v1
+kind: Job
+metadata: {name: mlflow-init, namespace: fleetops}
+spec:
+  backoffLimit: 6
+  template:
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      securityContext: {runAsUser: 10001, runAsNonRoot: true}
+      containers:
+        - name: init
+          image: fleetops-control-plane:dev
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "fleetops.registry.mlflow_admin"]
+          env:
+            - {name: MLFLOW_URL, value: "http://mlflow:5000"}
+            - {name: FLEETOPS_MLFLOW_USERNAME, value: fleetops-cp}
+          volumeMounts: [{name: secrets, mountPath: /run/secrets, readOnly: true}, {name: tmp, mountPath: /tmp}]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumes:
+        - name: secrets
+          projected:
+            defaultMode: 0444
+            sources:
+              - secret: {name: mlflow-secrets, items: [{key: mlflow_admin_password, path: mlflow_admin_password}]}
+              - secret: {name: fleetops-secrets, items: [{key: fleetops_mlflow_password, path: fleetops_mlflow_password}]}
+        - {name: tmp, emptyDir: {}}
+---
+# Single replica on purpose: SQLite + in-process rollout locks (see docs/architecture.md). Move to
+# PostgreSQL and leader election before scaling out.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: control-plane, namespace: fleetops}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: control-plane}}
+  template:
+    metadata:
+      labels: {app: control-plane}
+      annotations: {prometheus.io/scrape: "true", prometheus.io/port: "8000", prometheus.io/path: /metrics}
+    spec:
+      automountServiceAccountToken: false   # no API access needed; also avoids clashing with /run/secrets
+      securityContext: {runAsUser: 10001, runAsNonRoot: true, fsGroup: 10001}
+      containers:
+        - name: control-plane
+          image: fleetops-control-plane:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8000}]
+          env:
+            - {name: FLEETOPS_ENV, value: dev}
+            - {name: FLEETOPS_DATABASE_URL, value: "sqlite:////data/fleetops.db"}
+            - {name: FLEETOPS_ARTIFACT_ROOT, value: /data/artifacts}
+            - {name: FLEETOPS_MLFLOW_TRACKING_URI, value: "http://mlflow:5000"}
+            - {name: FLEETOPS_MLFLOW_USERNAME, value: fleetops-cp}
+            - {name: FLEETOPS_MQTT_HOST, value: mosquitto}
+            - {name: FLEETOPS_MQTT_USERNAME, value: control-plane}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: secrets, mountPath: /run/secrets, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+          readinessProbe: {httpGet: {path: /readyz, port: 8000}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /healthz, port: 8000}, periodSeconds: 10}
+          resources: {requests: {cpu: 100m, memory: 512Mi}, limits: {memory: 2Gi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumes:
+        - {name: data, persistentVolumeClaim: {claimName: control-plane-data}}
+        - {name: secrets, secret: {secretName: fleetops-secrets, defaultMode: 0444}}
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: control-plane, namespace: fleetops}
+spec:
+  selector: {app: control-plane}
+  ports: [{port: 8000, targetPort: 8000}]
+---
+# One edge agent as a StatefulSet (stable identity + PVC for the model store). On a real fleet each factory
+# K3s node runs its own agent with its own device id/secret.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: edge-01, namespace: fleetops}
+spec:
+  serviceName: edge-01
+  replicas: 1
+  selector: {matchLabels: {app: edge-01}}
+  template:
+    metadata:
+      labels: {app: edge-01}
+      annotations: {prometheus.io/scrape: "true", prometheus.io/port: "9100", prometheus.io/path: /metrics}
+    spec:
+      automountServiceAccountToken: false   # no API access needed; also avoids clashing with /run/secrets
+      securityContext: {runAsUser: 10001, runAsNonRoot: true, fsGroup: 10001}
+      containers:
+        - name: agent
+          image: fleetops-edge:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 9100}]
+          env:
+            - {name: FLEETOPS_EDGE_DEVICE_ID, value: edge-01}
+            - {name: FLEETOPS_EDGE_MQTT_HOST, value: mosquitto}
+            - {name: FLEETOPS_EDGE_CONTROL_PLANE_URL, value: "http://control-plane:8000"}
+            - {name: FLEETOPS_EDGE_ALLOW_FAULTS, value: "false"}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: secret, mountPath: /run/secrets, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+          readinessProbe: {httpGet: {path: /livez, port: 9100}, periodSeconds: 5}
+          resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 512Mi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumes:
+        - {name: secret, secret: {secretName: edge-01-secret, defaultMode: 0444}}
+        - {name: tmp, emptyDir: {}}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 512Mi}}}
