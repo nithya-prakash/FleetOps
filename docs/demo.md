@@ -41,3 +41,11 @@ all three devices on `anomaly-detector:2`, and 7 artifact downloads, each verifi
 - [ ] During step 6 show `curl` against edge-02 `/predict` answering while the control plane shows it OFFLINE.
 - [ ] End with `observe` and the Grafana panels; mention what is not claimed (see README "Limitations").
 - [ ] Review the recording for leaked tokens before sharing it.
+
+## How `docs/demo.gif` was made
+Recorded from a clean stack (`make reset && make up`), then rendered; nothing is edited by hand:
+```bash
+asciinema rec --headless --window-size 110x34 --idle-time-limit 1.5 --command "make demo" --output-format asciicast-v2 demo.cast
+agg --theme monokai --font-size 14 --idle-time-limit 1.5 --fps-cap 12 --last-frame-duration 5 demo.cast docs/demo.gif
+```
+The recording had 65 output events over 139 s and no errors; the GIF is about 1.2 MB and 28 s because idle waits are capped at 1.5 s.

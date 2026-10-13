@@ -7,8 +7,10 @@ Deploy, monitor and roll back ML models on a fleet of factory edge devices: cana
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
 ## Demo
-`make up && make demo` runs the full lifecycle on the real stack in about 2.5 min: train and register models, canary rollout, an injected fault that triggers **automatic rollback**, the quality gate blocking a worse model, a device losing its network and **still inferring locally**, then Prometheus' view of it all.
-Real, untruncated output of one run: [docs/demo-output.txt](docs/demo-output.txt). A GIF/video is **not recorded yet** (checklist: [docs/demo.md](docs/demo.md)). It shows simulated sensors on Docker, not real hardware.
+![make demo](docs/demo.gif)
+
+The GIF is a replay of a real `make demo` run on the full Docker stack (139 s of wall time; waits longer than 1.5 s are shortened). It shows model registration, a canary rollout, an injected fault causing **automatic rollback**, the quality gate rejecting a worse model, a device losing its network and **still inferring locally**, and Prometheus' record of it.
+It does not show the Grafana dashboard or real hardware (simulated sensors only). Full text of a run: [docs/demo-output.txt](docs/demo-output.txt); how to record your own: [docs/demo.md](docs/demo.md).
 
 ## Results
 All data is synthetic. Numbers come from one Apple M4 laptop (Docker Desktop), not from a production environment.
