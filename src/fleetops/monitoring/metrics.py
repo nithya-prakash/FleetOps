@@ -92,6 +92,14 @@ class ControlPlaneMetrics:
             "fleetops_deployment_targets_total", "Per-device deployment outcomes", ["outcome"], registry=r
         )
         self.rollbacks = Counter("fleetops_rollbacks_total", "Rollbacks initiated", ["trigger"], registry=r)
+        # Create every known label value at 0 up front. Prometheus' increase()/rate() ignore a counter series that first
+        # appears already at 1, so without this the very first rollback or deployment would show as 0 on the dashboard.
+        for state in ("COMPLETED", "ROLLED_BACK", "FAILED", "CANCELLED"):
+            self.deployments.labels(state)
+        for outcome in ("verified", "failed", "rolled_back"):
+            self.target_outcomes.labels(outcome)
+        for trigger in ("automatic", "manual"):
+            self.rollbacks.labels(trigger)
         self.mqtt_failures = Counter(
             "fleetops_mqtt_processing_failures_total",
             "MQTT messages that failed validation/processing",

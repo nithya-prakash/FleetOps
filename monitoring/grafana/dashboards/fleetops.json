@@ -368,7 +368,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (state) (increase(fleetops_deployments_total[1h]))",
+          "expr": "round(sum by (state) (increase(fleetops_deployments_total[1h])))",
           "legendFormat": "{{state}}",
           "refId": "A"
         }
@@ -401,7 +401,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (trigger) (increase(fleetops_rollbacks_total[1h]))",
+          "expr": "round(sum by (trigger) (increase(fleetops_rollbacks_total[1h])))",
           "legendFormat": "{{trigger}}",
           "refId": "A"
         }
@@ -434,7 +434,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (outcome) (increase(fleetops_deployment_targets_total[1h]))",
+          "expr": "round(sum by (outcome) (increase(fleetops_deployment_targets_total[1h])))",
           "legendFormat": "{{outcome}}",
           "refId": "A"
         }
@@ -579,7 +579,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (status) (increase(fleetops_drift_reports_total[1h]))",
+          "expr": "round(sum by (status) (increase(fleetops_drift_reports_total[1h])))",
           "legendFormat": "{{status}}",
           "refId": "A"
         }

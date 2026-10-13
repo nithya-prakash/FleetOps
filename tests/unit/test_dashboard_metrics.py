@@ -137,3 +137,20 @@ def test_prometheus_scrapes_the_services_that_export_these_metrics() -> None:
     jobs = {j["job_name"]: j["static_configs"][0]["targets"] for j in cfg["scrape_configs"]}
     assert jobs["fleetops-control-plane"] == ["control-plane:8000"]
     assert jobs["fleetops-edge"] == ["edge-01:9100", "edge-02:9100", "edge-03:9100"]
+
+
+def test_event_counters_exist_at_zero_so_the_first_event_is_visible_to_increase() -> None:
+    """Prometheus increase() ignores a counter series that first appears already at 1: a dashboard would show the first
+    rollback as 0. Every known label value must therefore be exported from the start."""
+    from prometheus_client import generate_latest  # noqa: PLC0415
+
+    from fleetops.monitoring.metrics import ControlPlaneMetrics  # noqa: PLC0415
+
+    text = generate_latest(ControlPlaneMetrics().registry).decode()
+    for series in (
+        'fleetops_deployments_total{state="ROLLED_BACK"} 0.0',
+        'fleetops_deployments_total{state="COMPLETED"} 0.0',
+        'fleetops_rollbacks_total{trigger="automatic"} 0.0',
+        'fleetops_deployment_targets_total{outcome="rolled_back"} 0.0',
+    ):
+        assert series in text, series

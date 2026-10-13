@@ -49,3 +49,14 @@ asciinema rec --headless --window-size 110x34 --idle-time-limit 1.5 --command "m
 agg --theme monokai --font-size 14 --idle-time-limit 1.5 --fps-cap 12 --last-frame-duration 5 demo.cast docs/demo.gif
 ```
 The recording had 65 output events over 139 s and no errors; the GIF is about 1.2 MB and 28 s because idle waits are capped at 1.5 s.
+
+## How `docs/demo-dashboard.gif` was made
+Playwright drives the installed Google Chrome against the Grafana dashboard (kiosk mode, 5 s refresh) on a fresh stack while `scripts/demo.py all` runs; a screenshot every 2 s (100 frames over 170 s), a Pillow overlay with the elapsed real time, then ffmpeg assembles the GIF at 5 frames/s (about 9x). Playwright and Pillow are installed in a throw-away virtual environment; they are not project dependencies.
+```bash
+python -m venv /tmp/pw && /tmp/pw/bin/pip install playwright pillow
+make reset && make up
+/tmp/pw/bin/python scripts/demo_media/record_dashboard.py --out /tmp/frames --interval 2 --tail 25
+# overlay a "real time Ns" label with Pillow, then:
+ffmpeg -framerate 5 -i /tmp/frames_labelled/frame_%04d.png -vf "scale=1000:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=96[p];[b][p]paletteuse=dither=bayer:bayer_scale=4" docs/demo-dashboard.gif
+```
+While recording it, the dashboard showed a real flaw that was then fixed: counters that first appear at 1 made `increase()` report 0 for the first rollback, and counts showed as fractions (1.03). All event counters are now created at 0 and the stat panels round.

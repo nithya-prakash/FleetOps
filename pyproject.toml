@@ -63,6 +63,7 @@ ignore = ["PLR0913", "PLR0917", "PLR2004", "PLR0911", "PLR0912", "PLR0915", "S10
 "scripts/**" = ["T20", "S603", "S607"]  # operator scripts call the docker/kubectl CLIs by design
 "scripts/gen_dashboard.py" = ["E501"]  # PromQL expressions
 "scripts/load_test/**" = ["E501", "PLC0415", "S603", "S607", "T201"]  # report formatting; docker CLI by design
+"scripts/demo_media/**" = ["E501", "T201", "S603"]  # recording helper
 "scripts/backup.py" = ["E501", "S108"]  # docstring prose; /tmp is inside the target container, not on the host
 "scripts/benchmarks/**" = ["E501", "PLC0415", "S603", "SLF001", "T201", "RUF100"]  # report formatting; builds ONNX from model internals by design
 
@@ -74,7 +75,7 @@ mypy_path = "src"
 files = ["src", "scripts"]
 
 [[tool.mypy.overrides]]
-module = ["mlflow.*", "safetensors.*", "pandera.*", "scipy.*", "paho.*", "torch.*", "alembic.*", "onnx.*", "onnxruntime.*"]
+module = ["mlflow.*", "safetensors.*", "pandera.*", "scipy.*", "paho.*", "torch.*", "alembic.*", "onnx.*", "onnxruntime.*", "playwright.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

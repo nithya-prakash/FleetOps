@@ -7,10 +7,13 @@ Deploy, monitor and roll back ML models on a fleet of factory edge devices: cana
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
 
 ## Demo
-![make demo](docs/demo.gif)
+![Grafana dashboard during the demo](docs/demo-dashboard.gif)
 
-The GIF is a replay of a real `make demo` run on the full Docker stack (139 s of wall time; waits longer than 1.5 s are shortened). It shows model registration, a canary rollout, an injected fault causing **automatic rollback**, the quality gate rejecting a worse model, a device losing its network and **still inferring locally**, and Prometheus' record of it.
-It does not show the Grafana dashboard or real hardware (simulated sensors only). Full text of a run: [docs/demo-output.txt](docs/demo-output.txt); how to record your own: [docs/demo.md](docs/demo.md).
+Above: the real Grafana dashboard while `make demo` runs on the full Docker stack (screenshots every 2 s, replayed about 9x, label shows real elapsed time). It shows three devices going from no model to v1 to v2, an injected fault producing **one automatic rollback** (rollback counters, per-device outcomes, failing inference on edge-01), and traffic on the MQTT bus. The early "unregistered" MQTT failures are the agents starting before the demo registers them.
+
+![make demo in the terminal](docs/demo.gif)
+
+Below it: the terminal side of the same demo (a recording of one run, waits over 1.5 s shortened): canary rollout, the quality gate rejecting a worse model, a device losing its network and **still inferring locally**, then Prometheus' record. Neither shows real hardware (simulated sensors only). Full text of a run: [docs/demo-output.txt](docs/demo-output.txt); how both were recorded: [docs/demo.md](docs/demo.md).
 
 ## Results
 All data is synthetic. Numbers come from one Apple M4 laptop (Docker Desktop), not from a production environment.
