@@ -227,6 +227,48 @@ make scan        # Trivy: uv.lock + all images (fails on fixable HIGH/CRITICAL);
 | Inference runtime benchmark | NumPy kept; ONNX Runtime fp32/INT8 measured, no benefit for this model: [docs/edge-inference-benchmarks.md](docs/edge-inference-benchmarks.md) |
 | Edge image for arm64 and amd64 | both built (amd64 under emulation) and run offline with identical results; **no physical edge device tested**: [docs/edge-devices.md](docs/edge-devices.md) |
 
+## Demo
+
+`make up && make demo` (or `python scripts/demo.py all`) runs the whole story against the real stack in about two and a half minutes: train and register
+models, register three devices, canary rollout of v1, a runtime fault that triggers an **automatic rollback**, the **quality gate** blocking a regressing model
+(and the override rules), a healthy staged rollout, a device losing its network and **continuing to infer locally** before reconciling, and finally what
+Prometheus recorded. Step-by-step commands, expected output and a recording checklist: [docs/demo.md](docs/demo.md).
+
+## Continuous integration
+
+`.github/workflows/ci.yml` has six jobs: `static` (lockfile, Ruff, mypy, workflow lint, Prometheus rules, Compose config), `tests` (all 363 tests with a real
+Mosquitto container and a coverage gate), `containers` (image builds, Trivy, live stack, security and dashboard checks, `make demo`), `tls-profile`,
+`kubernetes-manifests` and `kubernetes-e2e` (disposable k3d cluster). Least-privilege permissions, SHA-pinned actions, timeouts, no secrets.
+
+**Real result of the first GitHub run** (on `ubuntu-24.04`, 2 vCPU): `static`, `containers`, `tls-profile` and `kubernetes-manifests` passed; `tests` and `kubernetes-e2e` failed.
+The CI run found two genuine problems that never showed up locally, both fixed afterwards: the Kubernetes smoke test did not send the edge API token, and the shared test
+harness did not relax the memory health limit for agents that run inside the pytest process (their reported memory is the whole test process's, which grows past the limit late in a long run).
+The current state of the pipeline, each run's outcome and the remaining risks are tracked in [docs/ci.md](docs/ci.md); `scripts/ci_local.sh` reproduces the `static` and `tests` jobs in a clean copy.
+
+## Performance, soak and reliability evidence
+
+All numbers are from one Apple M4 laptop running Docker Desktop and are not capacity guarantees ([docs/load-test-results.md](docs/load-test-results.md)).
+* Edge `/predict`: about 1.2k requests/s per agent; model inference itself about 0.05 ms.
+* 100 simulated devices: connected in 3 s, heartbeat ingest lag p99 26 ms. A **100-device rollout took 12-13 s** after a fix; before it, rollouts timed out and rolled back.
+* **Why**: every heartbeat triggered a full pass over all of a deployment's devices on the single MQTT ingest thread. At 100 devices the thread saturated, acknowledgements arrived late, and commands were re-sent 150-300 times per rollout. Now a heartbeat only advances the deployment when it changed a device's state.
+* **Soak**: a harness with explicit PASS / FAIL / INCONCLUSIVE rules; a 50-minute run (42 minutes of steady state, 50 devices, a rollout every 5 minutes) **passed** with no memory growth, bounded threads, 9/9 rollouts completed, and 7.2 s recovery after a restart. An earlier run was flagged for thread growth, traced with `py-spy` to a lazily growing thread pool, and fixed. This does not prove multi-day stability.
+* 12 failure-injection scenarios (broker restart, crash mid-download, expired commands, corrupted artifacts, disk exhaustion, partial fleet failure, ...) with assertions on device state, database, audit log and metrics: [docs/reliability-test-results.md](docs/reliability-test-results.md).
+
+## Security summary
+
+Reviewed in [docs/security-assessment.md](docs/security-assessment.md): role-based API keys, per-device credentials with revocation, topic ACLs, signed expiring commands, hash-verified
+data-only model files, TLS/mTLS with verification never disabled, read-only non-root containers, rate/size limits, audited denials, and a Trivy-scanned supply chain. Problems found by running
+things (not assumed): a TLS certificate defect on newer Python versions, the ingest bottleneck above, and missing backup tooling (`scripts/backup.py` now exists; a restore drill has not been done).
+Not done: an external security review, a production PKI (a migration plan is in the assessment), Alertmanager/paging.
+
+## Local-demo readiness vs production readiness
+
+| | Local demo / portfolio | Production |
+|---|---|---|
+| Status | Ready: one command, reproducible, tested, documented | **Not ready** |
+| Why not | | single control-plane replica on SQLite (no high availability), development CA instead of a managed PKI, no Alertmanager or on-call, no backup schedule or restore drill, no tests on physical edge hardware or native Linux hosts, no external security review, limited CI history |
+| Move to PostgreSQL / several replicas when | | availability during restarts is required, the fleet outgrows one ingest thread (watch `fleetops_mqtt_ingest_lag_seconds`), or managed backups are needed - see [docs/capacity-and-scaling.md](docs/capacity-and-scaling.md) |
+
 ## Limitations and what still needs an external environment
 
 - **GitHub Actions has not run** (the workflow was reworked and validated locally; see [docs/ci.md](docs/ci.md)). `.github/workflows/ci.yml` (quality gate + real broker tests, image build + Trivy + live stack + security verification, kubeconform, k3d end-to-end) is untested until pushed; it has only been parsed and its steps mirrored locally. Linux hosts were not exercised (local runs were Docker Desktop on macOS/arm64).

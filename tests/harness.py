@@ -257,7 +257,9 @@ class Stack:
                 lambda: self.deployment(dep_id)["state"] in states, timeout, msg=f"deployment {dep_id} in {states}"
             )
         except AssertionError as exc:
-            raise AssertionError(f"{exc}\n{self.deployment(dep_id)}") from exc
+            dep = self.deployment(dep_id)
+            errors = [(t["device_id"], t["state"], t["last_error"]) for t in dep["targets"]]
+            raise AssertionError(f"{exc}\nstate={dep['state']} reason={dep['reason']!r} targets={errors}") from exc
         return self.deployment(dep_id)
 
     def wait_online(self, *device_ids: str) -> None:
@@ -283,6 +285,10 @@ class Stack:
             },
             **kw,
         }
+        # In-process agents report the whole pytest process's memory, which grows past the default 1 GB limit late in a
+        # long run (seen locally under coverage and on 2-vCPU CI runners) and would roll the deployment back. Real
+        # agents are separate processes (~65 MB). A test that wants a memory check passes its own limit.
+        body["health_criteria"] = {"max_memory_mb": 1_000_000, **body["health_criteria"]}  # type: ignore[dict-item]
         r = self.api("POST", "/api/v1/deployments", json=body)
         assert r.status_code in (200, 201), r.text
         return dict(r.json())

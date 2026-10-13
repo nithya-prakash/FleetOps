@@ -122,21 +122,13 @@ def tls_stack(tmp_path: Path, cp_settings: ControlPlaneSettings) -> Iterator[Sta
         stack.stop()
 
 
-# The agents in this harness run inside the pytest process, so the memory they report is the whole test process's RSS
-# (it grows past the default 1 GB limit late in a full run, especially under coverage). Real agents run as
-# separate processes.
-IN_PROCESS_AGENT = {"max_memory_mb": 1_000_000}
-
-
 def test_full_lifecycle_over_https_with_verified_artifact_download(tls_stack: Stack) -> None:
     stack = tls_stack
     assert stack.cp.url.startswith("https://")
     version = stack.train()
     agent = stack.add_agent("edge-01")  # the agent verifies the control plane certificate with the CA it was given
     stack.wait_online("edge-01")
-    final = stack.wait_state(
-        stack.deploy(version, health_criteria=IN_PROCESS_AGENT)["deployment_id"], {"COMPLETED", "FAILED", "ROLLED_BACK"}
-    )
+    final = stack.wait_state(stack.deploy(version)["deployment_id"], {"COMPLETED", "FAILED", "ROLLED_BACK"})
     assert final["state"] == "COMPLETED", (
         final["reason"],
         [(t["device_id"], t["state"], t["last_error"]) for t in final["targets"]],

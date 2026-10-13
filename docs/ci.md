@@ -1,7 +1,7 @@
 # Continuous integration
 
-**Status: the workflow has NOT been executed on GitHub.** The repository has no remote and no commits yet. What exists is a locally validated
-workflow plus a local emulation, described below. Do not read this document as "CI passes".
+**Status:** the workflow has run on GitHub. The first run ([run 38401322687](https://github.com/nithya-prakash/FleetOps/actions/runs/38401322687), 2026-10-13, `ubuntu-24.04`) had
+**4 of 6 jobs passing**; the two failures were real defects (below) and have fixes in the following commit. The outcome of the run after the fixes is recorded in "Run history" at the bottom of this file.
 
 ## Jobs (`.github/workflows/ci.yml`)
 | Job | Purpose | Timeout |
@@ -43,15 +43,13 @@ Locally (about 15 minutes, needs Docker and `uv`):
 ```bash
 scripts/ci_local.sh
 ```
-On GitHub (this is the only way to get a real result):
+On GitHub:
 ```bash
-# one-off: create the repository and push (decide visibility yourself); commit as the project author, without tooling attribution
-gh repo create <owner>/fleetops --private --source . --remote origin   # or --public
-git add -A && git commit -m "FleetOps" && git push -u origin main      # CI starts automatically
-gh run watch                                                            # follow the run
-gh workflow run ci.yml                                                  # manual re-run
-```
-Then record the real outcome (run URL, which jobs passed, durations, any failures and fixes) in `docs/status.md`. Expected first-run risks: the `containers`,
+git push origin main                  # CI starts automatically on every push to main and on pull requests
+gh run list --limit 3                 # recent runs
+gh run watch                          # follow the latest run
+gh workflow run ci.yml                # manual re-run (workflow_dispatch)
+``` Expected first-run risks: the `containers`,
 `tls-profile` and `kubernetes-e2e` jobs use Docker builds and timing-dependent waits that have only run on Docker Desktop; Trivy's database may report new findings;
 GitHub's runners are x86_64 while all local runs were arm64.
 
@@ -60,3 +58,19 @@ After the `devcerts.py` fix, the affected test files (`test_tls_mqtt.py`, `test_
 The complete clean-copy run on Python 3.12 (`scripts/ci_local.sh`, the closest local match to CI) was **not repeated** after the later engine and control-plane
 changes; the full suite was run in the working tree instead (see `docs/status.md`). Run `scripts/ci_local.sh` before the first push.
 `scripts/ci_local.sh` was generalised (temporary directory, `git init`, `UV_PYTHON=3.12`) after the run that produced the findings above and has only been syntax-checked in that final form.
+
+## Run history
+### Run 1 - first push (2026-10-13)
+| Job | Result | Time |
+|---|---|---|
+| `static` | passed | 42 s |
+| `kubernetes-manifests` | passed | 5 s |
+| `tls-profile` | passed | 3 min |
+| `containers` (build, Trivy, live stack, security checks, `demo.py all`, dashboard queries) | passed | 5 min |
+| `tests` | **failed**: 8 failed, 355 passed, 10 min 45 s | |
+| `kubernetes-e2e` | **failed** at the last step of the smoke test | 4 min |
+
+Causes and fixes:
+* `kubernetes-e2e`: the whole lifecycle worked (devices online, model trained, deployment COMPLETED on the pod); the final `/predict` call failed with `api token required`. The edge API requires its token and `scripts/k8s_smoke.py` did not send it (the script predates that protection and had not been re-run since). Fixed.
+* `tests`: all 8 failures were `deployment ... in {'COMPLETED'}` timeouts in `test_api.py` and `test_api_quality.py`. In-process test agents report the whole pytest process's memory, which on the runner (after ~80 tests with coverage) exceeded the default 1 GB health limit, so rollouts rolled back. The same mechanism had been found locally in one test; the fix is now in the shared harness (`Stack.deploy` relaxes the memory limit unless a test sets its own) and failure messages now include the deployment's state, reason and per-device errors. This explanation fits the pattern and the earlier local reproduction, but the CI log did not record the rollback reason, so the next run is the confirmation.
+* The suite is also slow on the runner (10 min 45 s vs ~6.5 min locally); the timeout budget (25 min) is sufficient.
