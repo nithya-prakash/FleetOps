@@ -63,7 +63,9 @@ def test_failed_rollback_marks_deployment_failed_and_is_recoverable(stack: Stack
     assert any(e["details"]["outcome"] == "FAILED" and e["details"]["error_code"] == "ROLLBACK_FAILED" for e in acks)
     metrics = stack.api("GET", "/metrics", role="viewer").text
     assert 'fleetops_deployments_total{state="FAILED"} 1.0' in metrics
-    assert 'fleetops_deployments_total{state="ROLLED_BACK"}' not in metrics
+    assert (
+        'fleetops_deployments_total{state="ROLLED_BACK"} 0.0' in metrics
+    )  # exported at 0 from start-up; never incremented
 
     stack.restart_control_plane()  # FAILED is durable across a restart and no automatic retry loop restarts it
     stack.wait_online("edge-01", "edge-02")
