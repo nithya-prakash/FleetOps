@@ -23,7 +23,7 @@ The model is trained and benchmarked on **real recordings** from one lab hydraul
 | Automated tests | 367 pass (94% line coverage when last measured, before the data switch) | 275 unit, 66 integration, 26 end-to-end, real Mosquitto | `make test-mqtt` (coverage: `pytest --cov`) |
 | Live security checks | 52 pass | running Compose stack | `make verify-security` |
 | Anomaly model v1 | precision 0.88, recall 0.82, F1 0.85, ROC-AUC 0.95, false-positive rate 0.054 | 662 held-out real rig cycles, 33% faulty (`hydraulic-benchmark-v1`); v2 on the same cycles: precision 0.81, recall 0.88, FPR 0.106 | `python scripts/demo.py gate` |
-| Edge `/predict` | 1,202 req/s per agent, p99 30 ms (16 clients) | 15 s per level, 256 fixed payloads; measured 2026-10-13 with the earlier 6-feature model, not re-run on the 5-feature one | `python -m scripts.load_test.run predict` |
+| Edge `/predict` | 1,260 req/s per agent, p99 28 ms (16 clients); 592 req/s at 1 client | 15 s per level, 256 recorded rig cycles; re-run 2026-10-16 on the 5-feature model | `python -m scripts.load_test.run predict` |
 | Rollout to 100 devices | 12-13 s (4/4 completed; 3/3 timed out before a fix) | 100 simulated agents over real MQTT | `python -m scripts.load_test.run warmup --devices 100` |
 | Soak | PASS: 50 min (42 min steady state), no memory growth | 50 simulated devices, rollout every 5 min | `python -m scripts.load_test.run soak --devices 50 --duration 3000` |
 | Recovery | 5.2 s after a control-plane restart, 1.6 s after a broker restart | 50 simulated devices | `python -m scripts.load_test.run restart --devices 50` |
@@ -32,7 +32,7 @@ The model is trained and benchmarked on **real recordings** from one lab hydraul
 The load-test commands need simulated-device credentials and raised rate limits first: see [docs/load-test-results.md](docs/load-test-results.md).
 
 ## Honest reading
-The model is a small MLP on five sensor means from a lab rig (precision 0.88 / recall 0.82 on 662 held-out cycles); the point of the project is the rollout, rollback and monitoring machinery, not the detector. "Anomaly" means a severe pump leak or a valve near total failure, applied deliberately in the experiment, so the one-third fault rate and the scores say nothing about a production line. v2 catches more faults than v1 but raises more false alarms, which is why the demo's strict gate blocks it and the demo's relaxed policy accepts it. The throughput, soak and recovery rows above predate the switch to real data.
+The model is a small MLP on five sensor means from a lab rig (precision 0.88 / recall 0.82 on 662 held-out cycles); the point of the project is the rollout, rollback and monitoring machinery, not the detector. "Anomaly" means a severe pump leak or a valve near total failure, applied deliberately in the experiment, so the one-third fault rate and the scores say nothing about a production line. v2 catches more faults than v1 but raises more false alarms, which is why the demo's strict gate blocks it and the demo's relaxed policy accepts it. The rollout, soak and recovery rows above predate the switch to real data (the control-plane path is unchanged; they were not re-run).
 Performance was measured on one laptop with simulated devices; nothing ran on physical edge hardware, a native Linux host or x86_64. CI ran on GitHub for the first time on 2026-10-13: the first run had two failing jobs
 (real defects, since fixed); the badge above shows the current state and [docs/ci.md](docs/ci.md) the history. The 50-minute soak is not evidence of multi-day stability.
 

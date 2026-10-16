@@ -11,7 +11,7 @@ is written by the tools to `load_results/` (git-ignored).
 | Container runtime | Docker Desktop 29.5.3, VM limits 10 CPUs / 8 GB, linux/arm64 images |
 | Software | Python 3.12.14, control plane (FastAPI/uvicorn, SQLite), MLflow (SQLite), Mosquitto 2.0.22, edge agents (NumPy runtime, 1 uvicorn worker) |
 | Transport | plaintext profile (TLS off), loopback ports, rate limits raised (`FLEETOPS_RATE_LIMIT_PER_SECOND=5000`, burst 10000, edge predict 5000/10000) |
-| Workload | model `anomaly-detector` (MLP 16-8, 6 features); deterministic request payloads (seed 7); simulated devices are real `EdgeAgent`s over real MQTT, 2-3 farm processes on the host |
+| Workload | model `anomaly-detector` (MLP 16-8; the edge `/predict` table was re-run 2026-10-16 with 5 features, the other tables used the earlier 6-feature model); deterministic request payloads (seed 7); simulated devices are real `EdgeAgent`s over real MQTT, 2-3 farm processes on the host |
 | Caveat | load generator and system under test share the same machine and compete for CPU |
 
 ## Reproduce
