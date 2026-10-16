@@ -49,7 +49,7 @@ from fleetops.registry.modelformat import InputRejectedError, ModelFormatError, 
 from fleetops.resilience import retry
 from fleetops.security.artifact import ChecksumMismatchError, verify_sha256
 from fleetops.security.device_identity import verify_command
-from fleetops.training.sensors import FEATURE_NAMES, generate_arrays
+from fleetops.training.hydraulic import FEATURE_NAMES, stream_pool
 
 logger = logging.getLogger(__name__)
 
@@ -564,27 +564,27 @@ class EdgeAgent:
 
 
 class _SensorFeed:
-    """Deterministic simulated sensor stream (stand-in for a PLC/OPC-UA feed)."""
+    """Deterministic replay of recorded hydraulic-rig cycles (stand-in for a PLC/OPC-UA feed).
 
-    def __init__(self, seed: int, scenario: str, label_fraction: float, block: int = 256) -> None:
-        self._seed, self._scenario, self._label_fraction, self._block = seed, scenario, label_fraction, block
+    Each device walks its own seeded shuffle of the recorded cycles and starts over when it runs out.
+    ``drift`` replays only cycles recorded while the cooler was close to total failure, a real change of
+    operating regime (see ``fleetops.training.hydraulic.stream_pool``).
+    """
+
+    def __init__(self, seed: int, scenario: str, label_fraction: float) -> None:
+        self._x, self._y = stream_pool(scenario)  # type: ignore[arg-type]
+        self._label_fraction = label_fraction
+        self._order_rng = np.random.default_rng(seed)
         self._rng = np.random.default_rng(seed + 10_000)
-        self._i = 0
-        self._x = np.zeros((0, len(FEATURE_NAMES)))
-        self._y = np.zeros(0, dtype=np.int64)
+        self._order = self._order_rng.permutation(len(self._x))
         self._cursor = 0
 
     def next(self) -> tuple[list[float], bool | None]:
-        if self._cursor >= len(self._x):
-            self._x, self._y, _ = generate_arrays(
-                self._block,
-                0.06,
-                self._seed * 1000 + self._i,
-                self._scenario,  # type: ignore[arg-type]
-            )
-            self._i += 1
+        if self._cursor >= len(self._order):
+            self._order = self._order_rng.permutation(len(self._x))
             self._cursor = 0
-        row, label = self._x[self._cursor], bool(self._y[self._cursor])
+        i = int(self._order[self._cursor])
         self._cursor += 1
+        row, label = self._x[i], bool(self._y[i])
         reveal = self._label_fraction > 0 and self._rng.random() < self._label_fraction
         return [float(v) for v in row], (label if reveal else None)

@@ -215,7 +215,7 @@ def test_revoked_device_cannot_feed_telemetry_predictions_or_state(stack: Stack)
         ts=utcnow(),
         model_name="anomaly-detector",
         model_version=1,
-        features=[1.0] * 6,
+        features=[1.0] * 5,
         score=0.1,
         anomaly=False,
         latency_ms=0.1,

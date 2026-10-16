@@ -20,8 +20,9 @@ from onnx import TensorProto, helper, numpy_helper
 from onnxruntime.quantization import CalibrationDataReader, QuantFormat, QuantType, quantize_dynamic, quantize_static
 
 from fleetops.registry.modelformat import MlpModel, load_bundle, save_bundle
-from fleetops.training.pipeline import EVAL_SEED, TrainParams, train_model
-from fleetops.training.sensors import FEATURE_NAMES, generate_arrays
+from fleetops.training.dataset import load_training_samples
+from fleetops.training.hydraulic import FEATURE_NAMES, benchmark_arrays
+from fleetops.training.pipeline import TrainParams, train_model
 
 
 def build_onnx(model: MlpModel, path: Path) -> None:
@@ -87,9 +88,9 @@ def main() -> None:
     save_bundle(bundle, result.tensors, result.meta)
     model = load_bundle(bundle)
     build_onnx(model, out / "model_fp32.onnx")
-    calib_x = generate_arrays(500, 0.06, 4242)[0].astype(
-        np.float32
-    )  # calibration data: training distribution, separate seed
+    calib_x = (
+        load_training_samples()[FEATURE_NAMES].sample(n=500, random_state=4242).to_numpy(np.float32)
+    )  # calibration data: real training cycles, never the benchmark
     quantize_dynamic(str(out / "model_fp32.onnx"), str(out / "model_int8_dynamic.onnx"), weight_type=QuantType.QInt8)
     quantize_static(
         str(out / "model_fp32.onnx"),
@@ -99,9 +100,7 @@ def main() -> None:
         activation_type=QuantType.QInt8,
         weight_type=QuantType.QInt8,
     )
-    ex, ey, _ = generate_arrays(
-        4000, 0.06, EVAL_SEED
-    )  # the fixed evaluation benchmark seed, saved so workers need no training code
+    ex, ey = benchmark_arrays()  # the fixed benchmark cycles, saved so workers need no training code
     np.save(out / "eval_x.npy", ex.astype(np.float32))
     np.save(out / "eval_y.npy", ey)
     (out / "meta.json").write_text(

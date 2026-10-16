@@ -1,4 +1,9 @@
-"""Numpy-only synthetic sensor generator (shared by training and the edge simulator)."""
+"""Small synthetic sensor generator, kept ONLY as a fast fixture for unit tests of pure maths (drift statistics).
+
+Nothing in the product path uses it: training, the fixed benchmark and the edge replay all use the real UCI
+hydraulic-rig cycles (``fleetops.training.hydraulic``). Six invented sensors, three fault modes injected as
+shifts of 2-4 sigma; ``scenario="drift"`` shifts the healthy distribution without changing labels.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +11,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
+import pandas as pd
 from numpy.typing import NDArray
 
 Scenario = Literal["normal", "drift"]
@@ -73,3 +79,11 @@ def generate_arrays(
     means = np.array([s.mean for s in SENSORS])
     stds = np.array([s.std for s in SENSORS])
     return z * stds + means, labels, modes
+
+
+def generate_samples(n: int, anomaly_fraction: float, seed: int, scenario: Scenario = "normal"):  # type: ignore[no-untyped-def]
+    x, labels, modes = generate_arrays(n, anomaly_fraction, seed, scenario)
+    df = pd.DataFrame(x, columns=FEATURE_NAMES)
+    df["label"] = labels
+    df["fault_mode"] = modes
+    return df

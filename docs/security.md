@@ -85,7 +85,7 @@ first distribute a bundle containing old and new CA, then re-issue leaves, then 
 ## Remaining limitations
 Single control-plane replica (SQLite, in-process locks); the default local profile is plaintext (use `make tls-up` for TLS); MLflow
 basic-auth is coarse-grained and MLflow's Flask secret is passed through the environment; agent `/healthz` is unauthenticated by design; no
-automated secret or certificate rotation; no revocation list for device certificates (revoke by bumping the device epoch); synthetic data only;
+automated secret or certificate rotation; no revocation list for device certificates (revoke by bumping the device epoch); one lab rig's data only;
 the image-vulnerability gate ignores unfixed issues; Docker Desktop on macOS was the only container runtime exercised locally (Linux is covered by
 the CI workflow, which has not yet run). This project has not had an external security review or penetration test.
 

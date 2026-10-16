@@ -34,7 +34,7 @@ VERIFY: ssl.SSLContext | bool = (
 DEVICES = ["edge-01", "edge-02", "edge-03"]
 EDGE_PORTS = {"edge-01": 19101, "edge-02": 19102, "edge-03": 19103}
 MODEL = "anomaly-detector"
-HEALTHY = [2.0, 65.0, 6.0, 12.0, 1480.0, 70.0]
+HEALTHY = [161.16, 35.54, 6.7, 0.54, 2555.56]
 CRITERIA = {"observation_seconds": 5, "min_inferences": 15, "ack_timeout_seconds": 60, "health_timeout_seconds": 90}
 
 
@@ -106,7 +106,7 @@ def bootstrap() -> None:
         v = r.json()
         print(
             f"  registered {v['name']}:{v['version']} sha256={v['sha256'][:16]}… test_f1={v['metrics']['test_f1']:.2f} "
-            f"roc_auc={v['metrics']['test_roc_auc']:.2f}  (synthetic data)"
+            f"roc_auc={v['metrics']['test_roc_auc']:.2f}  (real hydraulic-rig data)"
         )
     say("registering devices (group line-a)")
     for d in DEVICES:
@@ -204,9 +204,12 @@ def gate() -> None:
             + " ".join(f"{k.removeprefix('bench_')}={x:.3f}" for k, x in bench(v).items() if "latency" not in k)
         )
     before = {d: edge(d, "GET", "/healthz").json()["active"]["version"] for d in DEVICES}
-    strict = {"metrics": {"bench_f1": {"max_regression": 0.02}, "bench_recall": {"max_regression": 0.02}}}
+    strict = {
+        "metrics": {"bench_precision": {"max_regression": 0.02}, "bench_false_positive_rate": {"max_regression": 0.0}}
+    }
     say(
-        "v2 vs the running v1 with a strict policy (recall may drop at most 0.02): blocked before any device is touched"
+        "v2 vs the running v1 with a strict policy (precision may drop at most 0.02, false alarms may not rise): "
+        "blocked before any device is touched"
     )
     r = api(
         "POST",
@@ -262,7 +265,7 @@ def promote_v2() -> None:
         "metrics": {
             "bench_f1": {"max_regression": 0.02},
             "bench_recall": {"max_regression": 0.15},
-            "bench_false_positive_rate": {"max_regression": 0.0},
+            "bench_false_positive_rate": {"max_regression": 0.07},  # v2 trades +0.05 false alarms for +0.06 recall
         }
     }
     final = deploy(2, strategy={"canary_count": 1, "batch_percent": 50}, quality_gate=policy)

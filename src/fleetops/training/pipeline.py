@@ -22,24 +22,24 @@ from fleetops.registry.modelformat import BundleMeta, MlpModel
 from fleetops.training.dataset import (
     FEATURE_NAMES,
     dataset_fingerprint,
-    generate_samples,
+    load_training_samples,
     validate_dataset,
 )
-from fleetops.training.sensors import generate_arrays
+from fleetops.training.hydraulic import BENCHMARK_SEED, benchmark_arrays
 
 Array = NDArray[np.float32]
 
 # Fixed benchmark used to compare *any* two models (training seeds differ, so their own test splits do not).
-EVAL_SEED = 20_240_601
-EVAL_N = 4_000
-EVAL_ANOMALY_FRACTION = 0.06
+# It is a stratified 30% of the real hydraulic-rig cycles that training never sees (fleetops.training.hydraulic).
+EVAL_SEED = BENCHMARK_SEED
 EVAL_LATENCY_SAMPLES = 500
 THRESHOLD_POLICY = "model-own-threshold"
 
 
 class TrainParams(BaseModel):
+    # Cap on the training cycles used (a random subset of the ~1,540 real cycles outside the benchmark).
+    # Values above the pool size use all of them; small values make deliberately weaker models.
     n_samples: int = Field(default=6000, ge=200, le=200_000)
-    anomaly_fraction: float = Field(default=0.06, ge=0.01, le=0.5)
     hidden_sizes: list[int] = Field(default_factory=lambda: [16, 8], min_length=1, max_length=4)
     epochs: int = Field(default=40, ge=1, le=200)
     learning_rate: float = Field(default=0.01, gt=0, le=1)
@@ -103,7 +103,9 @@ def train_model(params: TrainParams) -> TrainingResult:
     if params.seed == EVAL_SEED:
         raise ValueError("seed is reserved for the evaluation benchmark")
     _set_determinism(params.seed)
-    df = validate_dataset(generate_samples(params.n_samples, params.anomaly_fraction, params.seed))
+    df = validate_dataset(load_training_samples())
+    if params.n_samples < len(df):
+        df = df.sample(n=params.n_samples, random_state=params.seed).reset_index(drop=True)
     x_all = df[FEATURE_NAMES].to_numpy(dtype=np.float32)
     y_all = df["label"].to_numpy(dtype=np.int64)
 
@@ -194,7 +196,7 @@ def run_benchmark(model: MlpModel) -> tuple[dict[str, float], dict[str, Any]]:
     single-sample ``predict`` calls (validation included) on *this* host, so it is only comparable between
     models benchmarked in the same environment (``latency_environment``).
     """
-    x, y, _ = generate_arrays(EVAL_N, EVAL_ANOMALY_FRACTION, EVAL_SEED)
+    x, y = benchmark_arrays()
     scores = model.scores(x.astype(np.float32))
     pred = scores >= model.meta.threshold
     precision, recall, f1 = _prf(y, pred)
@@ -221,10 +223,13 @@ def run_benchmark(model: MlpModel) -> tuple[dict[str, float], dict[str, Any]]:
         "metric_definitions_version": METRIC_DEFINITIONS_VERSION,
         "threshold_policy": THRESHOLD_POLICY,
         "dataset_fingerprint": hashlib.sha256(x.tobytes() + y.tobytes()).hexdigest(),
-        "n_samples": EVAL_N,
-        "anomaly_fraction": EVAL_ANOMALY_FRACTION,
+        "n_samples": len(y),
+        "anomaly_fraction": round(float(y.mean()), 4),
         "eval_seed": EVAL_SEED,
         "latency_environment": latency_environment(),
-        "note": "synthetic benchmark; not evidence of production performance",
+        "note": (
+            "fixed hold-out of real hydraulic test-rig cycles (UCI, CC BY 4.0); one lab rig with deliberately "
+            "applied faults, not evidence of production performance"
+        ),
     }
     return metrics, evaluation

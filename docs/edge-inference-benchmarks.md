@@ -37,7 +37,7 @@ physical edge device; relative results on a Raspberry Pi-class CPU may differ.
 | ONNX INT8 static | 6.8e-2 | 99.90% | 0.668 | 0.647 | 0.658 |
 
 (The import column for NumPy includes `fleetops`' model-format code and pydantic; ONNX's includes `onnxruntime`. Peak RSS is for a process that has
-imported only the runtime and the evaluation arrays. Detection quality is low in absolute terms because the benchmark is deliberately hard synthetic data; the point here is equality across runtimes.)
+imported only the runtime and the evaluation arrays. Detection quality is not the point here; it is equality across runtimes. NOTE: these latency and accuracy-parity numbers were measured on 2026-10-13 with the earlier 6-feature model and a 4,000-row synthetic benchmark; they were not re-run after the switch to real 5-feature hydraulic-rig data (662 benchmark rows).)
 
 ## Interpretation
 * **Latency**: ONNX fp32 is ~16% faster per single sample (0.011 vs 0.013 ms), a difference of two microseconds, far below the ~1.7 ms client-observed latency of the agent's HTTP API. For batches NumPy is faster. Neither matters for a 6-feature, 1 Hz-to-kHz sensor workload.

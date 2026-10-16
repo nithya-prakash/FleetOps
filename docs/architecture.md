@@ -41,7 +41,7 @@ it, the threat/risk model and the phased plan. It is kept in sync with the code;
 | Control plane | `fleetops.controlplane` | REST API, auth, device inventory, MQTT ingest, background loops |
 | Rollout engine | `fleetops.deployment` | Planning, state machine, canary/batch promotion, health evaluation, rollback, retries |
 | Registry | `fleetops.registry` | Model bundle format, content-addressed artifact store, MLflow tracking/registration |
-| Training | `fleetops.training` | Synthetic dataset, PyTorch training, evaluation, export to a safe bundle |
+| Training | `fleetops.training` | Real hydraulic-rig dataset (UCI), PyTorch training, evaluation, export to a safe bundle |
 | Messaging | `fleetops.messaging` | Topic convention, message schemas, bus abstraction (MQTT + in-memory for tests) |
 | Edge agent | `fleetops.edge` | Local inference, model store, command handling, heartbeat/telemetry, fault injection |
 | Monitoring | `fleetops.monitoring` | Prometheus metrics, drift statistics |

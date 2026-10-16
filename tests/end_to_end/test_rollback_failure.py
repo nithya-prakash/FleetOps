@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from tests.harness import Stack, wait_until
 
-HEALTHY = [2.0, 65.0, 6.0, 12.0, 1480.0, 70.0]
+HEALTHY = [161.16, 35.54, 6.7, 0.54, 2555.56]
 
 
 def active_version(stack: Stack, device_id: str) -> int | None:

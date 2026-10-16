@@ -62,7 +62,7 @@ def main() -> None:
     (out / "inference.json").write_text(json.dumps({"environment": env, "results": results}, indent=2))
     meta = json.loads((args.models / "meta.json").read_text())
     print(
-        f"environment: {env}\nmodel: MLP hidden {meta['hidden_sizes']}, {meta['parameters']} parameters, 6 features\n"
+        f"environment: {env}\nmodel: MLP hidden {meta['hidden_sizes']}, {meta['parameters']} parameters, 5 features\n"
     )
     print(
         "| runtime | artifact KB | import s | load ms | cold 1st ms | p50 ms | p95 ms | p99 ms | single/s | batch256/s | peak RSS MB | cpu ms/inf | max |dscore| vs numpy | decisions agree | precision | recall | F1 |"

@@ -1,10 +1,7 @@
-"""Synthetic factory-sensor dataset (clearly synthetic; see docs/architecture.md §7).
+"""Training dataset: real hydraulic test-rig cycles (see ``fleetops.training.hydraulic``).
 
-Six correlated process sensors for a motor/pump station. Anomalies are three fault modes
-(bearing wear, overheating, pressure leak) injected as 2-4 sigma shifts, so classes overlap and
-metrics are not trivially perfect. ``scenario="drift"`` shifts the *healthy* distribution to
-exercise drift monitoring without changing labels. Nothing here demonstrates real-world
-detection performance.
+The fixed benchmark cycles are excluded here, so a model is never trained on what the quality gate scores it on.
+The synthetic generator in ``fleetops.training.sensors`` is kept only as a small, fast fixture for unit tests.
 """
 
 from __future__ import annotations
@@ -14,33 +11,33 @@ import hashlib
 import pandas as pd
 import pandera.pandas as pa
 
-from fleetops.training.sensors import FEATURE_NAMES, SENSORS, Scenario, generate_arrays
+from fleetops.training.hydraulic import FEATURE_NAMES, load_cycles, training_arrays
 
-__all__ = ["FEATURE_NAMES", "SENSORS", "dataset_fingerprint", "generate_samples", "validate_dataset"]
-
-DATASET_SCHEMA = pa.DataFrameSchema(
-    {
-        **{s.name: pa.Column(float, pa.Check.in_range(s.mean - 12 * s.std, s.mean + 12 * s.std)) for s in SENSORS},
-        "label": pa.Column(int, pa.Check.isin([0, 1])),
-        "fault_mode": pa.Column(str),
-    },
-    strict=True,
-    coerce=False,
-)
+__all__ = ["FEATURE_NAMES", "dataset_fingerprint", "load_training_samples", "validate_dataset"]
 
 
-def generate_samples(n: int, anomaly_fraction: float, seed: int, scenario: Scenario = "normal") -> pd.DataFrame:
-    if n < 10:
-        raise ValueError("n must be >= 10")
-    x, labels, modes = generate_arrays(n, anomaly_fraction, seed, scenario)
+def _schema() -> pa.DataFrameSchema:
+    features = load_cycles().features
+    columns = {}
+    for i, name in enumerate(FEATURE_NAMES):
+        low, high = float(features[:, i].min()), float(features[:, i].max())
+        margin = max(high - low, 1e-6)  # generous: catches unit mix-ups and NaN-like garbage, not outliers
+        columns[name] = pa.Column(float, pa.Check.in_range(low - margin, high + margin))
+    columns["label"] = pa.Column(int, pa.Check.isin([0, 1]))
+    columns["fault_mode"] = pa.Column(str)
+    return pa.DataFrameSchema(columns, strict=True, coerce=False)
+
+
+def load_training_samples() -> pd.DataFrame:
+    x, y, mode = training_arrays()
     df = pd.DataFrame(x, columns=FEATURE_NAMES)
-    df["label"] = labels
-    df["fault_mode"] = modes
+    df["label"] = y
+    df["fault_mode"] = [str(m) for m in mode]
     return df
 
 
 def validate_dataset(df: pd.DataFrame) -> pd.DataFrame:
-    return DATASET_SCHEMA.validate(df)
+    return _schema().validate(df)
 
 
 def dataset_fingerprint(df: pd.DataFrame) -> str:

@@ -61,7 +61,7 @@ def test_models_expose_comparable_benchmark_metrics_and_metadata(stack: Stack) -
     }
     ea, eb = versions[a]["evaluation"], versions[b]["evaluation"]
     assert ea["dataset_fingerprint"] == eb["dataset_fingerprint"]  # different training seeds, same benchmark
-    assert ea["suite"] == "sensor-benchmark-v1" and "synthetic" in ea["note"]
+    assert ea["suite"] == "hydraulic-benchmark-v1" and "real hydraulic test-rig" in ea["note"]
     expected = {"bench_f1", "bench_recall", "bench_precision", "bench_p95_latency_ms", "bench_false_positive_rate"}
     assert expected <= set(versions[a]["metrics"])
     assert stack.api("POST", "/api/v1/models/train", json={"params": {"seed": 20240601}}).status_code == 422  # reserved

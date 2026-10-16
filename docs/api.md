@@ -55,10 +55,10 @@ target: `PENDING, DISTRIBUTING, STAGED, ACTIVE, FAILED, ROLLED_BACK, CANCELLED`.
 ## Quality gate (optional, per deployment; can be made mandatory)
 
 Healthy containers say nothing about model quality, so `POST /deployments` can enforce a policy **before any device is touched**.
-Every trained model is evaluated on a fixed benchmark (`sensor-benchmark-v1`, independent of the training seed) so models are comparable;
+Every trained model is evaluated on a fixed benchmark (`hydraulic-benchmark-v1`, independent of the training seed) so models are comparable;
 the metrics (`bench_precision`, `bench_recall`, `bench_f1`, `bench_roc_auc`, `bench_false_positive_rate`, `bench_p95_latency_ms`) and the
 evaluation metadata (suite, dataset fingerprint, metric-definition version, threshold policy, latency environment) are in
-`GET /models/{name}/versions` (`metrics`, `evaluation`). The benchmark is synthetic and says nothing about real factory performance.
+`GET /models/{name}/versions` (`metrics`, `evaluation`). The benchmark is a fixed hold-out of real recordings from one lab hydraulic rig (662 cycles, 33% faulty); it says nothing about a factory line.
 
 ```json
 "quality_gate": {

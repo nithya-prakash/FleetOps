@@ -24,8 +24,11 @@ from fleetops.registry.modelformat import (
     save_bundle,
 )
 from fleetops.security.artifact import sha256_file
-from fleetops.training.dataset import FEATURE_NAMES, generate_samples, validate_dataset
+from fleetops.training.dataset import FEATURE_NAMES, load_training_samples, validate_dataset
+from fleetops.training.hydraulic import benchmark_arrays, load_cycles, stream_pool
 from fleetops.training.pipeline import TrainingResult, TrainParams, train_model
+from tests.synthetic_sensors import FEATURE_NAMES as SYNTH_FEATURES
+from tests.synthetic_sensors import generate_samples
 
 
 @pytest.fixture(scope="module")
@@ -40,18 +43,36 @@ def bundle(tmp_path: Path, trained: TrainingResult) -> Path:
     return p
 
 
-def test_dataset_is_deterministic_and_valid() -> None:
-    a, b = generate_samples(500, 0.1, seed=1), generate_samples(500, 0.1, seed=1)
+def test_real_dataset_labels_match_the_recorded_conditions() -> None:
+    cycles = load_cycles()
+    assert len(cycles) == 2205
+    pump, valve = cycles.pump == 2, cycles.valve == 73
+    assert int(pump.sum()) == 492 and int(valve.sum()) == 360  # counts published with the UCI dataset
+    assert (cycles.label == (pump | valve)).all()
+    assert 0.3 < cycles.label.mean() < 0.4
+    assert set(cycles.fault_mode) == {"none", "pump_leak", "valve_failure", "pump_leak+valve_failure"}
+
+
+def test_benchmark_is_held_out_fixed_and_stratified() -> None:
+    train = load_training_samples()
+    bx, by = benchmark_arrays()
+    assert len(train) + len(by) == 2205
+    # no benchmark cycle may appear in training: compare rows of all five sensors
+    train_rows = {tuple(r) for r in train[FEATURE_NAMES].round(4).to_numpy()}
+    assert not any(tuple(np.round(r, 4)) in train_rows for r in bx)
+    assert abs(by.mean() - load_cycles().label.mean()) < 0.01
+    x2, y2 = benchmark_arrays()
+    assert np.array_equal(bx, x2) and np.array_equal(by, y2)
+
+
+def test_training_set_is_deterministic_and_valid() -> None:
+    a, b = load_training_samples(), load_training_samples()
     assert a.equals(b)
-    assert not a.equals(generate_samples(500, 0.1, seed=2))
     validate_dataset(a)
-    assert 0 < a["label"].mean() < 0.3
-    with pytest.raises(ValueError, match="anomaly_fraction"):
-        generate_samples(500, 0.9, seed=1)
 
 
 def test_dataset_schema_rejects_bad_data() -> None:
-    df = generate_samples(100, 0.1, seed=1)
+    df = load_training_samples().head(100).copy()
     df.loc[0, "temperature_c"] = 1e6
     with pytest.raises(pandera.errors.SchemaError):
         validate_dataset(df)
@@ -59,7 +80,7 @@ def test_dataset_schema_rejects_bad_data() -> None:
 
 def test_numpy_runtime_matches_torch(trained: TrainingResult, bundle: Path) -> None:
     model = load_bundle(bundle)
-    df = generate_samples(200, 0.2, seed=99)
+    df = load_training_samples().head(200)
     x = df[FEATURE_NAMES].to_numpy(dtype=np.float32)
     # rebuild the torch net from the same tensors and compare outputs
     t = trained.tensors
@@ -85,20 +106,21 @@ def test_training_is_reproducible(tmp_path: Path) -> None:
 
 def test_model_beats_chance(trained: TrainingResult) -> None:
     assert trained.metrics["test_roc_auc"] > 0.85
+    assert trained.metrics["bench_roc_auc"] > 0.85  # on the fixed held-out real cycles
 
 
 def test_prediction_and_input_validation(bundle: Path) -> None:
     model = load_bundle(bundle)
-    healthy = [s.mean for s in __import__("fleetops.training.dataset", fromlist=["SENSORS"]).SENSORS]
-    faulty = list(healthy)
-    faulty[0] += 4.0
-    faulty[5] += 20.0
+    x, y = benchmark_arrays()
+    healthy = x[y == 0][0].tolist()
+    faulty = x[y == 1][0].tolist()
     assert not model.predict(healthy).anomaly
+    assert model.predict(faulty).anomaly
     assert model.predict(faulty).score > model.predict(healthy).score
-    with pytest.raises(InputRejectedError, match="expected 6"):
+    with pytest.raises(InputRejectedError, match="expected 5"):
         model.predict([1.0])
     with pytest.raises(InputRejectedError, match="NaN"):
-        model.predict([float("nan")] * 6)
+        model.predict([float("nan")] * 5)
     bad = list(healthy)
     bad[1] = 5000.0
     with pytest.raises(InputRejectedError, match="plausible"):
@@ -155,15 +177,15 @@ def test_psi_properties() -> None:
 
 def test_drift_ok_on_same_distribution_alert_on_shift() -> None:
     ref_df = generate_samples(5000, 0.06, seed=1)
-    reference = build_reference(FEATURE_NAMES, ref_df[FEATURE_NAMES].to_numpy(dtype=np.float64))
+    reference = build_reference(SYNTH_FEATURES, ref_df[SYNTH_FEATURES].to_numpy(dtype=np.float64))
     th = DriftThresholds(min_samples=100)
 
-    same = generate_samples(1000, 0.06, seed=2)[FEATURE_NAMES].to_numpy(dtype=np.float64)
-    status, per_feature = evaluate_drift(reference, FEATURE_NAMES, same, th)
+    same = generate_samples(1000, 0.06, seed=2)[SYNTH_FEATURES].to_numpy(dtype=np.float64)
+    status, per_feature = evaluate_drift(reference, SYNTH_FEATURES, same, th)
     assert status == "OK", [f.as_dict() for f in per_feature if f.status != "OK"]
 
-    drifted = generate_samples(1000, 0.06, seed=3, scenario="drift")[FEATURE_NAMES].to_numpy(dtype=np.float64)
-    status, per_feature = evaluate_drift(reference, FEATURE_NAMES, drifted, th)
+    drifted = generate_samples(1000, 0.06, seed=3, scenario="drift")[SYNTH_FEATURES].to_numpy(dtype=np.float64)
+    status, per_feature = evaluate_drift(reference, SYNTH_FEATURES, drifted, th)
     assert status == "ALERT"
     flagged = {f.feature for f in per_feature if f.status == "ALERT"}
     assert "temperature_c" in flagged
@@ -172,12 +194,23 @@ def test_drift_ok_on_same_distribution_alert_on_shift() -> None:
 
 def test_drift_insufficient_data() -> None:
     ref_df = generate_samples(2000, 0.06, seed=1)
-    reference = build_reference(FEATURE_NAMES, ref_df[FEATURE_NAMES].to_numpy(dtype=np.float64))
-    x = generate_samples(20, 0.06, seed=2)[FEATURE_NAMES].to_numpy(dtype=np.float64)
-    assert evaluate_drift(reference, FEATURE_NAMES, x, DriftThresholds(min_samples=100)) == (
+    reference = build_reference(SYNTH_FEATURES, ref_df[SYNTH_FEATURES].to_numpy(dtype=np.float64))
+    x = generate_samples(20, 0.06, seed=2)[SYNTH_FEATURES].to_numpy(dtype=np.float64)
+    assert evaluate_drift(reference, SYNTH_FEATURES, x, DriftThresholds(min_samples=100)) == (
         "INSUFFICIENT_DATA",
         [],
     )
+
+
+def test_real_regime_shift_is_flagged_and_normal_replay_is_not() -> None:
+    reference = build_reference(FEATURE_NAMES, load_training_samples()[FEATURE_NAMES].to_numpy(dtype=np.float64))
+    th = DriftThresholds(min_samples=100)
+    rng = np.random.default_rng(0)
+    for scenario, expected in (("normal", "OK"), ("drift", "ALERT")):
+        x, _ = stream_pool(scenario)  # type: ignore[arg-type]
+        window = x[rng.choice(len(x), size=300, replace=False)]
+        status, per_feature = evaluate_drift(reference, FEATURE_NAMES, window, th)
+        assert status == expected, [f.as_dict() for f in per_feature]
 
 
 def test_labelled_quality() -> None:

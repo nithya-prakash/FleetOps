@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field, model_validator
 from fleetops.domain.models import StrictModel
 
 METRIC_DEFINITIONS_VERSION = 1
-EVAL_SUITE = "sensor-benchmark-v1"
+EVAL_SUITE = "hydraulic-benchmark-v1"
 
 
 class Direction(StrEnum):

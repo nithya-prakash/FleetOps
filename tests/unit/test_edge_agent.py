@@ -19,7 +19,7 @@ from tests.helpers import faults, make_command, make_manifest, rollback_to
 from tests.unit.conftest import Bundle
 
 SECRET = "edge-secret-for-tests-0001"
-HEALTHY = [2.0, 65.0, 6.0, 12.0, 1480.0, 70.0]
+HEALTHY = [161.16, 35.54, 6.7, 0.54, 2555.56]
 
 
 def make_agent(

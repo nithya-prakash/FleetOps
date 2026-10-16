@@ -60,11 +60,11 @@ def test_valid_prediction_runs_locally_and_reports_model(served) -> None:  # typ
     [
         ({"features": []}, "at least 1"),
         ({"features": "abc"}, "valid list"),
-        ({"features": [1.0, 2.0]}, "expected 6 features, got 2"),
-        ({"features": [1.0] * 7}, "expected 6 features, got 7"),
+        ({"features": [1.0, 2.0]}, "expected 5 features, got 2"),
+        ({"features": [1.0] * 7}, "expected 5 features, got 7"),
         ({"features": [1.0] * 300}, "at most 256"),
-        ({"features": [2.0, 65.0, 6.0, 12.0, 1480.0, 1e9]}, "outside plausible range"),
-        ({"features": [2.0, 65.0, 6.0, 12.0, 1480.0, None]}, "valid number"),
+        ({"features": [160.0, 40.0, 7.0, 0.6, 1e9]}, "outside plausible range"),
+        ({"features": [160.0, 40.0, 7.0, 0.6, None]}, "valid number"),
         ({}, "required"),
     ],
 )
@@ -79,9 +79,7 @@ def test_malformed_or_implausible_input_is_422_and_model_unaffected(served, payl
 
 def test_non_finite_and_non_json_bodies(served) -> None:  # type: ignore[no-untyped-def]
     _, client, _ = served
-    r = client.post(
-        "/predict", content='{"features": [NaN, 1, 1, 1, 1, 1]}', headers={"content-type": "application/json"}
-    )
+    r = client.post("/predict", content='{"features": [NaN, 1, 1, 1, 1]}', headers={"content-type": "application/json"})
     assert r.status_code == 422 and "NaN" in r.text
     assert client.post("/predict", content=b"not json", headers={"content-type": "application/json"}).status_code == 422
     assert client.post("/predict", content=b"\xff\xfe", headers={"content-type": "application/json"}).status_code == 422

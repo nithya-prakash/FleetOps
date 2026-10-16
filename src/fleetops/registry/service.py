@@ -58,9 +58,9 @@ class ModelRegistrationService:
                     "sha256": sha,
                     "format": compat.format,
                     "framework": FRAMEWORK,
-                    "dataset": "synthetic-sensor-v1",
+                    "dataset": "uci-hydraulic-rig-v1",
                     "features": ",".join(result.meta.input_schema.names),
-                    "note": "synthetic data; metrics do not indicate production readiness",
+                    "note": "real lab-rig data (UCI hydraulic, CC BY 4.0); not evidence of production readiness",
                 },
                 extra_json={
                     "input_schema.json": schema,

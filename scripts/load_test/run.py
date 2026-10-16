@@ -25,8 +25,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+import numpy as np
 
-from fleetops.training.sensors import generate_arrays
+from fleetops.training.hydraulic import benchmark_arrays
 from scripts.load_test.common import (
     CP_URL,
     EDGE_URL,
@@ -48,7 +49,8 @@ from scripts.load_test.soak import evaluate
 from scripts.load_test.timeline import fetch_events, timeline
 
 DATASET_SEED = 7  # deterministic request payloads for every run
-ROWS = [row.tolist() for row in generate_arrays(256, 0.06, DATASET_SEED)[0]]
+_X = benchmark_arrays()[0]
+ROWS = [_X[i].tolist() for i in np.random.default_rng(DATASET_SEED).choice(len(_X), size=256, replace=False)]
 MODEL = "anomaly-detector"
 
 
@@ -145,7 +147,12 @@ def cmd_predict(a: argparse.Namespace) -> None:
         r["resources"] = stats.summary()
         results.append(r)
     path = save(
-        "predict", {"device": device, "payload_dataset": f"synthetic seed {DATASET_SEED}, 256 rows", "results": results}
+        "predict",
+        {
+            "device": device,
+            "payload_dataset": f"256 recorded hydraulic-rig cycles, seed {DATASET_SEED}",
+            "results": results,
+        },
     )
     print(f"\n### /predict on {device} (closed loop, {a.duration}s per level)\n")
     print(

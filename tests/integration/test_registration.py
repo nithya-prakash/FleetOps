@@ -47,7 +47,7 @@ def test_train_register_roundtrip(cp_settings: ControlPlaneSettings, tmp_path: P
     with session_scope(sessions) as db:
         rows = db.scalars(select(ModelVersion).order_by(ModelVersion.version)).all()
         assert [r.version for r in rows] == [1, 2]
-        assert rows[0].input_schema["features"][0]["name"] == "vibration_rms_mm_s"
+        assert rows[0].input_schema["features"][0]["name"] == "pressure_bar"
         assert "test_f1" in rows[0].metrics
 
 

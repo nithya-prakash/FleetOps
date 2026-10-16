@@ -33,7 +33,7 @@ scenarios; single replica, SQLite.
 | 10 | Portfolio | README, engineering decisions, reproducible demo script | Demo uses real functionality end to end; recording checklist provided |
 
 ## Known limitations carried into this work
-Single control-plane replica; local-only evidence (Docker Desktop on macOS/arm64, no Linux host, no physical edge device); synthetic data;
+Single control-plane replica; local-only evidence (Docker Desktop on macOS/arm64, no Linux host, no physical edge device); real lab-rig data from one hydraulic test rig (UCI, CC BY 4.0), simulated devices;
 GitHub Actions workflow never executed; Kubernetes verified on a single-node k3d only.
 
 ## Progress log

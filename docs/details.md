@@ -11,8 +11,8 @@ canary rollout with health checks, and **automatically rolled back** (a real mod
 device) when the canary misbehaves. Devices keep inferring locally when the network or control
 plane is down.
 
-> **Scope note.** Everything runs on a laptop with simulated devices and a **synthetic** sensor
-> dataset. Metrics from synthetic data say nothing about real factory performance, and the local
+> **Scope note.** Everything runs on a laptop with simulated devices. The model data is **real** (recordings from one
+> lab hydraulic rig, UCI, CC BY 4.0), but faults were applied deliberately, so metrics say nothing about real factory performance, and the local
 > profile is a development setup (plaintext MQTT/HTTP, throw-away credentials), not a production one.
 
 ## Architecture
@@ -48,7 +48,7 @@ brief): [docs/architecture.md](architecture.md).
 | Control plane | `src/fleetops/controlplane` | REST API, auth, inventory, MQTT ingest, background ticker |
 | Rollout engine | `src/fleetops/deployment` | Canary/batch rollout, health gates, rollback, retries, crash-safe state |
 | Registry | `src/fleetops/registry` | safetensors bundle format, artifact store, MLflow registration |
-| Training | `src/fleetops/training` | Synthetic sensor data (Pandera-validated), PyTorch MLP, evaluation |
+| Training | `src/fleetops/training` | Real hydraulic-rig cycles (Pandera-validated), PyTorch MLP, evaluation |
 | Edge agent | `src/fleetops/edge` | Local inference, atomic model store, signed-command handling, fault injection |
 | Monitoring | `src/fleetops/monitoring` | Prometheus metrics, PSI + chi-square drift, review recommendations |
 
@@ -168,7 +168,7 @@ HTTP 422 quality_gate_failed
 ```
 A deliberately weak v3 is rejected too, an operator's override attempt gets `403`, and all devices stay on v1. `make promote-v2` then rolls
 v2 out under an explicit policy that accepts the recall trade-off. See [docs/api.md](api.md#quality-gate-optional-per-deployment-can-be-made-mandatory)
-and [docs/runbooks/quality-gate.md](runbooks/quality-gate.md). The benchmark is synthetic.
+and [docs/runbooks/quality-gate.md](runbooks/quality-gate.md). The benchmark is a fixed hold-out of real hydraulic-rig cycles.
 
 ## Offline inference demonstration
 
@@ -278,8 +278,8 @@ Not done: an external security review, a production PKI (a migration plan is in 
 - Single control-plane replica (SQLite + in-process locks); PostgreSQL / leader election / distributed locking are future work (not implemented).
 - The default local profile is plaintext; the TLS profile (`make tls-up`) is exercised but uses a development CA, not a production PKI. MLflow basic-auth is coarse-grained; agent health and (without a token) metrics endpoints are unauthenticated on internal networks.
 - With no known-good model, rollback deactivates inference (503) rather than leaving a failing model running - a documented safety trade-off, not configurable yet.
-- The quality gate relies on a synthetic benchmark and noisy host-dependent latency; models registered before the benchmark existed are "incomparable" until retrained.
-- Models are verified by checksum + signed commands, not by a signature chain from a build pipeline. Synthetic data and one MLP format only.
+- The quality gate relies on a small benchmark (662 real cycles from one rig) and noisy host-dependent latency; models registered before the benchmark existed are "incomparable" until retrained.
+- Models are verified by checksum + signed commands, not by a signature chain from a build pipeline. One lab rig and one MLP format only.
 - Grafana panels were verified by provisioning and live queries, not visually reviewed.
 - Performance numbers come from one Apple M4 laptop with Docker Desktop; nothing was measured on x86_64, Linux hosts or physical edge hardware. The 10-minute soak cannot rule out a slow memory leak.
 - No Alertmanager or paging is configured; no external security review has been done. FleetOps is a development/portfolio system and is **not** claimed production-ready or highly available.

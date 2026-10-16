@@ -19,7 +19,7 @@ from fleetops.config.settings import ControlPlaneSettings
 from fleetops.edge.api import create_edge_app
 from tests.harness import Stack, free_port, wait_until
 
-HEALTHY = [2.0, 65.0, 6.0, 12.0, 1480.0, 70.0]
+HEALTHY = [161.16, 35.54, 6.7, 0.54, 2555.56]
 SANS = ["control-plane", "localhost", "127.0.0.1"]
 
 

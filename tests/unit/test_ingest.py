@@ -44,7 +44,7 @@ def heartbeat(device: str = "edge-01", **kw: object) -> Heartbeat:
 
 def predictions(n: int = 3, device: str = "edge-01") -> PredictionBatch:
     sample = PredictionSample(
-        ts=utcnow(), model_name="anomaly", model_version=1, features=[1.0] * 6, score=0.1, anomaly=False, latency_ms=0.1
+        ts=utcnow(), model_name="anomaly", model_version=1, features=[1.0] * 5, score=0.1, anomaly=False, latency_ms=0.1
     )
     return PredictionBatch(device_id=device, sent_at=utcnow(), samples=[sample] * n)
 

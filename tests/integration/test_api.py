@@ -171,7 +171,8 @@ def test_drift_alert_creates_review_recommendation_without_deploying(stack: Stac
     wait_until(alert, timeout=30, interval=0.5, msg="drift alert")
     rep = stack.api("GET", "/api/v1/monitoring/drift?status=alert", role="viewer").json()["items"][0]
     flagged = {f["feature"] for f in rep["features"] if f["status"] == "ALERT"}
-    assert "temperature_c" in flagged and "pressure_bar" not in flagged
+    # a real regime change (cooler close to failure) moves every recorded sensor, not just one
+    assert flagged == {"pressure_bar", "temperature_c", "flow_l_min", "vibration_mm_s", "motor_power_w"}
     assert rep["quality"]["measured"] is True and "does not by itself mean" in rep["quality"]["note"]
     recs = stack.api("GET", "/api/v1/monitoring/recommendations?status=open", role="viewer").json()
     assert recs["total"] == 1 and "No automatic deployment" in recs["items"][0]["message"]

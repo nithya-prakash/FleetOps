@@ -1,9 +1,9 @@
 # Project status (verified 2026-10-13, updated after the hardening round)
 
-FleetOps is a **development / portfolio system**: not claimed production-ready, not highly available (single control-plane replica), synthetic data only.
+FleetOps is a **development / portfolio system**: not claimed production-ready, not highly available (single control-plane replica), real data from one lab rig only (no fleet data).
 
 ## Verified on this checkout (commands in the README and docs)
-* `pytest` with a real Mosquitto container: **363 passed** (271 unit, 66 integration, 26 end-to-end), 94% line coverage; `uv lock --check`, `ruff format --check`, `ruff check`, strict `mypy` (78 files) clean.
+* `pytest` with a real Mosquitto container: **367 passed** (275 unit, 66 integration, 26 end-to-end; 94% line coverage was measured before the real-data switch and not re-run); `uv lock --check`, `ruff format --check`, `ruff check`, strict `mypy` (78 files) clean.
 * Live stack (plain and TLS profiles): `python scripts/demo.py all` (canary failure -> automatic rollback, quality gate, override rules, healthy rollout, offline inference + reconciliation, Prometheus observations); `scripts/verify_security.py` (52 checks), `make verify-tls`, `scripts/verify_dashboard.py`; a rollout over TLS.
 * Trivy 0.75.0 on `uv.lock` and the images: exit 0, no fixable HIGH/CRITICAL on the scan date.
 * 12 failure-injection scenarios with assertions on device, persisted state, audit and metrics: `docs/reliability-test-results.md` (includes defects found and fixed).

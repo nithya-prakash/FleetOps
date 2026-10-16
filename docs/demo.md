@@ -36,7 +36,7 @@ all three devices on `anomaly-detector:2`, and 7 artifact downloads, each verifi
 - [ ] Fresh `make reset && make up`, wait for healthy; close other CPU-heavy apps.
 - [ ] Terminal font large, 100+ columns; hide secrets: never show `.env`, `deploy/secrets/*` or the Grafana password on screen.
 - [ ] Open Grafana first (dashboard "FleetOps"), time range "last 15 minutes", auto refresh 5 s.
-- [ ] Say up front: development profile, synthetic data, single replica, not production.
+- [ ] Say up front: development profile, real data from one lab rig but simulated devices, single replica, not production.
 - [ ] Run the steps above in order; pause on the audit trail (step 3) and the 422 reasons (step 4).
 - [ ] During step 6 show `curl` against edge-02 `/predict` answering while the control plane shows it OFFLINE.
 - [ ] End with `observe` and the Grafana panels; mention what is not claimed (see README "Limitations").
