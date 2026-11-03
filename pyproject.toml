@@ -36,7 +36,7 @@ train = ["torch~=2.14.1"]
 # Offline inference-runtime benchmark only (scripts/benchmarks); the edge image stays NumPy-only.
 bench = ["onnx~=1.23.2", "onnxruntime~=1.31.0"]
 dev = [
-  "pytest~=9.1.1",
+  "pytest>=9.1.1,<9.3.0",
   "pytest-asyncio~=1.4.0",
   "pytest-cov~=7.1.0",
   "ruff~=0.17.0",
